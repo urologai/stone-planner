@@ -1,0 +1,32 @@
+# Imaging data never goes in the repo
+*.dcm
+*.DCM
+*.nii
+*.nii.gz
+*.nrrd
+*.seg.nrrd
+*.mha
+*.mhd
+*.raw
+data/
+cases/
+scans/
+uploads/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Slicer
+*.mrb
+*.mrml
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
