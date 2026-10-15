@@ -58,7 +58,7 @@ def test_kji_affine_maps_same_voxel_to_same_point(module):
 
 def test_plan_on_kji_arrays_matches_ijk(module):
     """What the Logic hands the planner gives the same plan as the NIfTI layout."""
-    params = geometry.PlanParams(n_entry_points=100_000, top_n=3)
+    params = geometry.PlanParams(n_entry_points=100_000, top_n=3, target_mode="stone")
     ct, organs, stones = phantom.make_phantom()
     a = geometry.plan(ct, organs, stones, phantom.AFFINE, side="right", params=params)
     kji = [arr.transpose(2, 1, 0) for arr in (ct, organs, stones)]
@@ -69,14 +69,45 @@ def test_plan_on_kji_arrays_matches_ijk(module):
         assert ta.nearest_organ_mm == pytest.approx(tb.nearest_organ_mm, abs=1e-6)
 
 
+def test_calyx_targets_on_kji_arrays_match_ijk(module):
+    from stoneplanner import calyx
+
+    _, organs, _ = phantom.make_phantom()
+    kidney = organs == phantom.LABELS["kidney_right"]
+    a = calyx.posterior_calyces(kidney, phantom.AFFINE, "right")
+    b = calyx.posterior_calyces(kidney.transpose(2, 1, 0), module.kji_affine(phantom.AFFINE),
+                                "right")
+    assert [t.group for t in a] == [t.group for t in b]
+    for ta, tb in zip(a, b):
+        np.testing.assert_allclose(ta.point_mm, tb.point_mm, atol=0.5)   # one ray step
+        np.testing.assert_allclose(ta.axis_mm, tb.axis_mm, atol=1e-6)
+
+
 def test_tract_label(module):
     t = geometry.Tract(entry_mm=np.zeros(3), target_mm=np.ones(3), reachable_fraction=0.876,
                        tract_length_mm=80.0, parenchymal_depth_mm=20.0, nearest_organ="colon",
                        nearest_organ_mm=14.3, supracostal=True, collision=False,
-                       collision_organ=None)
-    assert module.tract_label(1, t) == "Tract 1: reach 88%, colon 14 mm, supracostal"
-    t.nearest_organ, t.nearest_organ_mm, t.supracostal = "", float("inf"), False
-    assert module.tract_label(2, t) == "Tract 2: reach 88%"
+                       collision_organ=None, flexible_reachable_fraction=1.0, score=0.71,
+                       target_group="lower", target_source="calyx")
+    assert module.tract_label(1, t) == (
+        "Tract 1 (lower calyx): score 0.71, reach 88% (flex 100%), colon 14 mm, supracostal")
+    plain = geometry.Tract(entry_mm=np.zeros(3), target_mm=np.ones(3), reachable_fraction=0.5,
+                           tract_length_mm=80.0, parenchymal_depth_mm=20.0, nearest_organ="",
+                           nearest_organ_mm=float("inf"), supracostal=False, collision=False,
+                           collision_organ=None)
+    assert module.tract_label(2, plain) == "Tract 2: reach 50%"
+
+
+def test_params_from(module, tmp_path):
+    path = tmp_path / "weights.json"
+    path.write_text('{"w_colon": 0.8, "posterior_calyx_deg": 20}')
+    params = module.params_from(path, sweep_deg=30.0, target_mode="calyx")
+    assert (params.w_colon, params.posterior_calyx_deg, params.sweep_deg) == (0.8, 20, 30.0)
+    assert params.target_mode == "calyx"
+    assert module.params_from(None, sweep_deg=20.0).sweep_deg == 20.0
+    path.write_text('{"w_colonn": 1}')
+    with pytest.raises(ValueError, match="w_colonn"):
+        module.params_from(path)
 
 
 def test_colors_cover_every_organ(module):

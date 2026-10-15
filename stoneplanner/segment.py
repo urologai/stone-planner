@@ -304,7 +304,6 @@ def segment_stones(ct_hu: np.ndarray, organs: np.ndarray, affine: np.ndarray):
     keep[0] = False
 
     # Step 5, then renumber by volume.
-    voxel_mm3 = abs(np.linalg.det(affine[:3, :3]))
     found = []
     for comp, sl in enumerate(ndimage.find_objects(lab), start=1):
         if sl is None or not keep[comp]:
@@ -312,27 +311,46 @@ def segment_stones(ct_hu: np.ndarray, organs: np.ndarray, affine: np.ndarray):
         in_comp = lab[sl] == comp
         peak = float(hu[sl][in_comp].max())
         final = in_comp & (hu[sl] >= 0.5 * peak)
-        ijk_local = np.argwhere(final) + np.array([s.start for s in sl])
-        found.append((len(ijk_local), ijk_local))
-    found.sort(key=lambda f: -f[0])
-
-    table = []
-    for label, (count, ijk_local) in enumerate(found, start=1):
-        ijk = ijk_local + offset
+        found.append(np.argwhere(final) + np.array([s.start for s in sl]) + offset)
+    found.sort(key=lambda ijk: -len(ijk))
+    for label, ijk in enumerate(found, start=1):
         stones[tuple(ijk.T)] = label
+    return stones, stone_table(stones, ct_hu, organs, affine)
+
+
+def stone_table(stones: np.ndarray, ct_hu: np.ndarray, organs: np.ndarray,
+                affine: np.ndarray) -> list[dict]:
+    """One row per stone label in any stone label map, e.g. one edited by hand.
+
+    Columns as in the module docstring. Laterality is the side whose kidney
+    is nearer to most of the stone's voxels.
+    """
+    labels = [int(v) for v in np.unique(stones) if v > 0]
+    if not labels:
+        return []
+    kidneys = np.isin(organs, [ORGAN_LABELS["kidney_left"], ORGAN_LABELS["kidney_right"]])
+    idx = np.argwhere((stones > 0) | kidneys)
+    box = tuple(slice(a, b) for a, b in zip(idx.min(axis=0), idx.max(axis=0) + 1))
+    d_left, d_right = _kidney_distances(organs, box, _spacing(affine))
+    offset = np.array([s.start for s in box])
+    voxel_mm3 = abs(np.linalg.det(affine[:3, :3]))
+    table = []
+    for label in labels:
+        ijk = np.argwhere(stones == label)
+        local = tuple((ijk - offset).T)
         values = ct_hu[tuple(ijk.T)]
         mm = _voxel_to_mm(ijk, affine)
-        nearer_left = d_left[tuple(ijk_local.T)] < d_right[tuple(ijk_local.T)]
+        nearer_left = d_left[local] < d_right[local]
         table.append({
             "label": label,
-            "volume_mm3": float(count * voxel_mm3),
+            "volume_mm3": float(len(ijk) * voxel_mm3),
             "mean_hu": float(values.mean()),
             "max_hu": float(values.max()),
             "centroid_xyz_mm": mm.mean(axis=0),
             "laterality": "left" if nearer_left.mean() > 0.5 else "right",
             "bbox": np.concatenate([mm.min(axis=0), mm.max(axis=0)]),
         })
-    return stones, table
+    return table
 
 
 def write_stone_table(table: list[dict], path: Path) -> Path:
