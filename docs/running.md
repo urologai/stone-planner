@@ -7,10 +7,10 @@ How to take the 20 cases from DICOM to the validation report. Imaging and output
 Python 3.10 or later, in a virtual environment:
 
 ```
-pip install -e ".[dev]"
+pip install -e ".[ingest,segment,dev]"
 ```
 
-This pulls in TotalSegmentator and PyTorch. dcm2niix is optional but preferred for conversion (`pip install dcm2niix` or your package manager); without it SimpleITK is used. If your DICOM is JPEG-compressed, also install `pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg`, or every compressed series is flagged as possibly carrying burned-in text, because the check cannot read its pixels.
+`segment` pulls in TotalSegmentator and PyTorch; leave it out if segmentation runs on the web app's GPU service instead. dcm2niix is optional but preferred for conversion (`pip install dcm2niix` or your package manager); without it SimpleITK is used. If your DICOM is JPEG-compressed, also install `pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg`, or every compressed series is flagged as possibly carrying burned-in text, because the check cannot read its pixels.
 
 Run the tests once: `pytest`. They use synthetic phantoms only.
 

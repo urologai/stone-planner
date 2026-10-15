@@ -1,0 +1,124 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #1c2230;
+  --muted: #5f6b7a;
+  --line: #d9dde3;
+  --accent: #1f5fae;
+  --accent-text: #ffffff;
+  --bad: #b3261e;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --card: #1a1f26;
+    --text: #e4e7eb;
+    --muted: #9aa4b1;
+    --line: #2c333d;
+    --accent: #4b8fe0;
+    --bad: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.error { color: var(--bad); }
+.banner { margin: 0.5rem 1rem; }
+code { font-size: 0.85em; }
+
+.center { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.login { width: min(360px, 100%); display: flex; flex-direction: column; gap: 0.75rem; }
+label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+
+input, select {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  min-width: 0;
+}
+
+button, .button {
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+button.secondary, .button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  flex-wrap: wrap;
+}
+.spacer { flex: 1; }
+.case-id { font-weight: 600; }
+.row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+
+.upload { max-width: 640px; margin: 1.5rem auto; padding: 0 1rem; }
+.file { margin-bottom: 0.75rem; }
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+aside { min-width: 0; }
+.main { min-width: 0; }
+
+.field { margin-bottom: 0.5rem; }
+.field > span { color: var(--muted); font-size: 0.8rem; }
+.pair { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.pair input { width: 6rem; }
+.sub { display: flex; flex-direction: column; font-size: 0.75rem; color: var(--muted); }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 0.75rem; }
+legend { font-size: 0.85rem; font-weight: 600; }
+details { margin-bottom: 0.5rem; }
+summary { cursor: pointer; font-size: 0.85rem; margin-bottom: 0.5rem; }
+
+.viewer { background: #0f1115; border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
+.viewer-bar { display: flex; gap: 1rem; padding: 0.4rem 0.75rem; color: #d6dbe1; flex-wrap: wrap; }
+.toggle { flex-direction: row; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+/* NiiVue sizes the canvas to its parent, so the parent carries the height. */
+.viewer-canvas { height: min(70vh, 640px); min-height: 360px; }
+.viewer-canvas canvas { display: block; width: 100%; height: 100%; }
+
+.tracts { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.tracts th, .tracts td { text-align: left; padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--line); }
+.tracts tbody tr { cursor: pointer; }
+.tracts tbody tr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; margin-right: 0.35rem; }
+.tag { font-size: 0.75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; margin-right: 0.25rem; }
+.tag.bad { color: var(--bad); border-color: var(--bad); }
+.card:has(.tracts) { overflow-x: auto; }

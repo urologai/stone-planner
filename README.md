@@ -61,7 +61,7 @@ Nice to have, not required for Phase 1: a manual stone volume measured by someon
 
 ## How to look at it
 
-Phase 1 runs inside 3D Slicer, a free desktop program for medical imaging. You load a case, run the module, and the top tracts appear as lines on the CT with their scores. Phase 2 adds a web viewer so you can review cases from a browser or phone without installing anything.
+Phase 1 runs inside 3D Slicer, a free desktop program for medical imaging. You load a case, run the module, and the top tracts appear as lines on the CT with their scores. There is also a browser version: you upload a case that has already been de-identified on your own machine, it is segmented and planned on the server, and you see the CT, organs, stones and top tracts in the browser. The server keeps nothing; you save the case to your own computer to come back to it.
 
 ## Data policy
 
