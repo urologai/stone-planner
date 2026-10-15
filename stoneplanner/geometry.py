@@ -449,7 +449,7 @@ def reachable_fraction(apex_mm: np.ndarray, axis_mm: np.ndarray, stones: np.ndar
 # Step 6: full pipeline
 
 
-def _resolve_side(stones: np.ndarray, organs: np.ndarray, affine: np.ndarray,
+def resolve_side(stones: np.ndarray, organs: np.ndarray, affine: np.ndarray,
                   params: PlanParams) -> str:
     _, volumes, centroids = _stone_table(stones, affine)
     if len(volumes) == 0:
@@ -489,7 +489,7 @@ def plan(ct: np.ndarray, organs: np.ndarray, stones: np.ndarray, affine: np.ndar
     if not (ct.shape == organs.shape == stones.shape):
         raise ValueError("ct, organs and stones must share one grid")
     if side == "auto":
-        side = _resolve_side(stones, organs, affine, params)
+        side = resolve_side(stones, organs, affine, params)
     _side_sign(side)
 
     stones = _operative_side_stones(stones, organs, affine, side, params)
@@ -617,7 +617,7 @@ def main(argv: list[str] | None = None) -> int:
     stones = np.asarray(stone_img.dataobj).astype(np.int32)
     side = args.side
     if side == "auto":
-        side = _resolve_side(stones, organs, affine, params)
+        side = resolve_side(stones, organs, affine, params)
     tracts = plan(ct, organs, stones, affine, side=side, params=params)
     csv_path, json_path = write_outputs(tracts, args.out_dir, _case_id(args.ct), side, params)
     print(f"{len(tracts)} tracts, side {side}: {csv_path}, {json_path}")
