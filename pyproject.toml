@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stoneplanner"
+version = "0.1.0"
+description = "Research software for PCNL access tract planning from autocontoured noncontrast CT. Not for clinical use."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "SimpleITK>=2.3",
+    "nibabel>=5.0",
+    "pydicom>=2.4",
+    "scikit-image>=0.21",
+    "trimesh>=4.0",
+    "pandas>=2.0",
+    "TotalSegmentator>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+stoneplanner-ingest = "stoneplanner.ingest:main"
+stoneplanner-segment = "stoneplanner.segment:main"
+stoneplanner-plan = "stoneplanner.geometry:main"
+
+[tool.setuptools.packages.find]
+include = ["stoneplanner*"]
+
+[tool.ruff]
+line-length = 100
