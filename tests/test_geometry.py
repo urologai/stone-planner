@@ -238,8 +238,15 @@ def test_targets_keep_largest_even_if_small():
 # Full pipeline
 
 
+def phase1(**overrides):
+    """Phase 1 behaviour: stone-centroid targets, no soft penalties."""
+    zero = {k: 0.0 for k in ("w_colon", "w_pleura", "w_supracostal", "w_parenchyma",
+                             "w_infundibular")}
+    return g.PlanParams(**{"target_mode": "stone", **zero, **overrides})
+
+
 def test_plan_ranks_clear_full_reach_first():
-    params = g.PlanParams()
+    params = phase1()
     ct, organs, stones = make_phantom()
     tracts = g.plan(ct, organs, stones, AFFINE, side="right", params=params)
     assert 0 < len(tracts) <= params.top_n
@@ -248,13 +255,13 @@ def test_plan_ranks_clear_full_reach_first():
     assert top.reachable_fraction == pytest.approx(1.0)
     np.testing.assert_allclose(top.target_mm, STONE_C, atol=0.2)
     assert top.entry_mm[0] > 0.0
-    keys = [(t.collision, -t.reachable_fraction, -t.nearest_organ_mm, t.tract_length_mm)
-            for t in tracts]
+    keys = [(t.collision, -t.score, -t.nearest_organ_mm, t.tract_length_mm) for t in tracts]
+    assert all(t.score == pytest.approx(t.reachable_fraction) for t in tracts)
     assert keys == sorted(keys)
 
 
 def test_plan_avoids_colon_blocked_tracts():
-    params = g.PlanParams(top_n=10_000)
+    params = phase1(top_n=10_000)
     blocker = STONE_C + 11.0 * POSTEROLATERAL
     ct, organs, stones = make_phantom(colon_xy=(blocker[0], blocker[1]))
     tracts = g.plan(ct, organs, stones, AFFINE, side="right", params=params)
@@ -266,7 +273,7 @@ def test_plan_avoids_colon_blocked_tracts():
 
 
 def test_plan_auto_side_and_contralateral_stone():
-    params = g.PlanParams()
+    params = phase1()
     # Small left stone; the right stone is larger, so auto picks right and the
     # left stone does not dilute the reachable fraction.
     ct, organs, stones = make_phantom(extra_stones=[((-16.0, -8.0, 0.0), 1.5)])
@@ -277,7 +284,7 @@ def test_plan_auto_side_and_contralateral_stone():
 
 
 def test_plan_is_independent_of_voxel_order():
-    params = g.PlanParams(n_entry_points=100_000, top_n=5)
+    params = phase1(n_entry_points=100_000, top_n=5)
     a = g.plan(*make_phantom(AFFINE), AFFINE, side="right", params=params)
     b = g.plan(*make_phantom(AFFINE_FLIPPED), AFFINE_FLIPPED, side="right", params=params)
     for ta, tb in zip(a, b):
@@ -287,16 +294,17 @@ def test_plan_is_independent_of_voxel_order():
 
 
 def test_injected_targets_override_centroids():
-    params = g.PlanParams()
+    params = phase1()
     ct, organs, stones = make_phantom()
     target = STONE_C + np.array([0.0, 0.0, 6.0])
     tracts = g.plan(ct, organs, stones, AFFINE, side="right", params=params,
-                    targets_mm=target[None, :])
+                    targets=target[None, :])
     assert all(np.allclose(t.target_mm, target) for t in tracts)
+    assert all(t.target_source == "manual" and t.target_group == "upper" for t in tracts)
 
 
 def test_write_outputs(tmp_path):
-    params = g.PlanParams(top_n=3)
+    params = phase1(top_n=3)
     ct, organs, stones = make_phantom()
     tracts = g.plan(ct, organs, stones, AFFINE, side="right", params=params)
     csv_path, json_path = g.write_outputs(tracts, tmp_path, "phantom", "right", params)
@@ -305,4 +313,5 @@ def test_write_outputs(tmp_path):
     assert payload["params"]["sweep_deg"] == 25.0
     assert [row["rank"] for row in payload["tracts"]] == [1, 2, 3]
     header = csv_path.read_text().splitlines()[0].split(",")
-    assert header[:4] == ["rank", "entry_xyz_mm", "target_xyz_mm", "reachable_fraction"]
+    assert header == g.CSV_COLUMNS
+    assert payload["best_by_group"]["mid"]["rank"] == 1

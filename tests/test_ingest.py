@@ -43,9 +43,11 @@ def _slice_hu(k, burned=False):
 
 def write_series(folder, burned=False, modality="CT", series_uid=None, tag_burned=False):
     folder.mkdir(parents=True, exist_ok=True)
-    study_uid = "1.2.826.0.1.3680043.8.498.111"
-    series_uid = series_uid or "1.2.826.0.1.3680043.8.498.222"
-    frame_uid = "1.2.826.0.1.3680043.8.498.333"
+    # Planted UIDs use a root pydicom's generate_uid() never produces, so a new
+    # random UID cannot contain one by chance.
+    study_uid = "1.3.6.1.4.1.99999.7.111"
+    series_uid = series_uid or "1.3.6.1.4.1.99999.7.222"
+    frame_uid = "1.3.6.1.4.1.99999.7.333"
     for k in range(N_SLICES):
         ds = Dataset()
         ds.SOPClassUID = ingest.CT_IMAGE_STORAGE
@@ -116,7 +118,7 @@ def test_deidentify_removes_phi(tmp_path):
     assert all("MRN" not in f.name for f in files)
     for f in files:
         raw = f.read_bytes()
-        for s in PHI_STRINGS + [b"1.2.826.0.1.3680043.8.498.111", b"ACME PRIVATE"]:
+        for s in PHI_STRINGS + [b"1.3.6.1.4.1.99999.7.111", b"ACME PRIVATE"]:
             assert s not in raw, (f.name, s)
         ds = pydicom.dcmread(f)
         assert ds.PatientIdentityRemoved == "YES"
@@ -145,7 +147,7 @@ def test_deidentify_keeps_geometry_pixels_and_consistent_uids(tmp_path):
 
 def test_refuses_mixed_series_and_non_ct(tmp_path):
     folder = write_series(tmp_path / "two")
-    write_series(tmp_path / "two" / "other", series_uid="1.2.826.0.1.3680043.8.498.999")
+    write_series(tmp_path / "two" / "other", series_uid="1.3.6.1.4.1.99999.7.999")
     with pytest.raises(ValueError, match="2 series"):
         ingest.deidentify_series(folder, tmp_path / "deid")
     with pytest.raises(ValueError, match="CT"):

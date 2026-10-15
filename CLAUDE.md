@@ -2,9 +2,11 @@
 
 Read PLAN.md first. README.md is for physician collaborators; keep it free of stack detail.
 
-Phase 1 scope only. Do not add web code, calyx inference, flexible-scope reach, soft penalties, or any model training. Those are Phase 2 and 3 and are listed in PLAN.md.
+Phase 2 scope: posterior calyx proxy with manual target pick, soft penalties and a weighted score, flexible-scope reach as a second score, correction logging in Slicer, and the residual-fragment statistics in validate.py. No web code until the scoring is stable on real cases (PLAN.md says so), and no model training (Phase 3).
 
-Module contracts are in the docstrings of stoneplanner/ingest.py, segment.py, geometry.py, StonePlanner/StonePlanner.py, and scripts/validate.py. Implement to those contracts; change a contract only with a reason stated in the commit message.
+Clinical defaults (penalty weights, margins, calyx angle and depth, flexible-scope sweep) are placeholders until surgeons set them. Keep every one a PlanParams field, written into the output JSON.
+
+Module contracts are in the docstrings of stoneplanner/ingest.py, segment.py, geometry.py, calyx.py, corrections.py, StonePlanner/StonePlanner.py, and scripts/validate.py. Implement to those contracts; change a contract only with a reason stated in the commit message.
 
 Rules:
 - No imaging data in the repo, ever. .gitignore blocks it; do not weaken that.
@@ -14,4 +16,4 @@ Rules:
 - TotalSegmentator on CPU by default. MPS is unverified.
 - Prose style: no em dashes, no filler, sentence-case headings.
 
-Order of work: geometry.py with phantom tests first (the contribution), then segment.py, then ingest.py, then the Slicer module, then validate.py.
+Order of work (Phase 2): calyx.py and the scoring changes in geometry.py with phantom tests first, then corrections.py and the Slicer module, then validate.py.
