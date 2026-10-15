@@ -41,7 +41,7 @@ No patient is enrolled, examined, or treated at any phase. Everything is retrosp
 - Cases. Retrospective PCNL CTs with the operative note and postop imaging are the dataset. Each case needs the actual puncture site (calyceal group, supracostal or subcostal) and stone-free status. If you have cases and are willing to share under the IRB determination, that is the single most useful contribution.
 - Ground truth. Manual stone volume measurements and manual calyx labeling on a subset, so we can check the automated output.
 - Reader study. Phase 3 needs surgeons at every level to plan tracts on the case set, with and without the tool. Takes a few hours spread over a few sessions.
-- Clinical judgment. The reach model has parameters (nephroscope sweep angle, depth) and the scoring has weights (how much to penalize a near-colon tract). These should come from surgeons, not from a programmer's guess. Argue with the defaults.
+- Clinical judgment. The reach model has parameters (nephroscope sweep angle, depth) and the scoring has weights (how much to penalize a near-colon tract). These should come from surgeons, not from a programmer's guess. Argue with the defaults: [docs/parameters.md](docs/parameters.md) lists each one and the question it raises.
 - Code. If you write Python, the geometry engine and the Slicer module are where the work is.
 
 ## What we need from each case

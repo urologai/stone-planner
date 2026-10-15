@@ -28,18 +28,38 @@ Implementation notes:
 
   - Files read per case, from cases_dir/<case_id>/: <case_id>_stones.csv
     and <case_id>_organs.nii.gz (segment), <case_id>_tracts.json (plan).
-    A missing file leaves that case's affected columns blank with a note;
-    blank cases are left out of the counts, and the summary says how many.
+    When the Slicer export wrote <case_id>_stones_corrected.csv or
+    <case_id>_organs_corrected.nii.gz, those are used instead and the
+    stones_source column says so. A missing file leaves that case's
+    affected columns blank with a note; blank cases are left out of the
+    counts, and the summary says how many.
   - Automated volume is the sum of stones whose laterality matches the
     manual laterality, or all stones if the manual laterality is neither
     left nor right.
   - The top-ranked tract is rank 1 of the plan output when it is collision
     free. If every tract collides, the group is "none" and both matches
     are 0.
-  - The kidney is the operative side from the plan JSON. Thirds split the
-    kidney mask's superior-inferior extent in RAS mm. A centroid outside
-    the convex hull (a UPJ or proximal ureteral stone) is "outside", which
-    matches no operative calyx.
+  - Calyceal group: the target_group the plan wrote for the tract (Phase 2
+    plans). For a Phase 1 plan without it, calyx.calyceal_group on the
+    operative kidney: thirds along the kidney's long axis, "pelvis" in the
+    hull but outside the mask, "outside" beyond the hull (a UPJ or proximal
+    ureteral stone), which matches no operative calyx.
+
+Phase 2 additions:
+
+  - reach_operative_group and flex_reach_operative_group: rigid and
+    flexible reachable fraction of the best collision-free tract aimed at
+    the calyceal group the surgeon actually used (best_by_group in the plan
+    JSON). This stands in for the actual tract, whose coordinates are not
+    recorded.
+  - Residual fragments: AUC of reach_operative_group for stone-free versus
+    residual cases (Mann-Whitney U / n1 n2, 0.5 = no discrimination) with
+    its two-sided p, and Spearman's rho against residual_mm (0 when stone
+    free). Both report n; with the 20 to 80 cases planned, read them as
+    effect sizes with wide uncertainty.
+  - Correction frequency: from <case_id>_corrections.json when the Slicer
+    export wrote one. Cases with any edit, with organ edits, with stone
+    edits, and how often each organ was edited.
 
 Usage:
     python scripts/validate.py <cases_dir> <manual.csv> <out_dir>
@@ -51,14 +71,17 @@ import argparse
 import csv
 import json
 import statistics
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 GROUPS = ("upper", "mid", "lower", "pelvis")
-COLUMNS = ["case_id", "auto_volume_mm3", "manual_volume_mm3", "volume_pct_error",
-           "top_tract_group", "operative_calyx", "calyx_match",
-           "top_supracostal", "operative_supracostal", "supracostal_match", "note"]
+COLUMNS = ["case_id", "stones_source", "auto_volume_mm3", "manual_volume_mm3",
+           "volume_pct_error", "top_tract_group", "top_tract_source", "operative_calyx",
+           "calyx_match", "top_supracostal", "operative_supracostal", "supracostal_match",
+           "reach_operative_group", "flex_reach_operative_group", "stone_free", "residual_mm",
+           "corrections_any", "organs_edited", "stones_edited", "note"]
 
 
 def read_manual(path: Path) -> dict[str, dict]:
@@ -77,32 +100,6 @@ def auto_volume(stones_csv: Path, laterality: str) -> float:
     return total
 
 
-def calyceal_group(point_mm: np.ndarray, kidney: np.ndarray, affine: np.ndarray) -> str:
-    """upper / mid / lower by thirds of the kidney, pelvis in the sinus, else outside."""
-    from scipy.spatial import ConvexHull, Delaunay
-
-    ijk = np.argwhere(kidney)
-    if len(ijk) < 4:
-        return "outside"
-    pts = ijk @ affine[:3, :3].T + affine[:3, 3]
-    point_mm = np.asarray(point_mm, dtype=float)
-
-    inv = np.linalg.inv(affine)
-    v = np.rint(inv[:3, :3] @ point_mm + inv[:3, 3]).astype(int)
-    in_mask = bool(np.all((v >= 0) & (v < kidney.shape)) and kidney[tuple(v)])
-    if not in_mask:
-        hull = Delaunay(pts[ConvexHull(pts).vertices])
-        return "pelvis" if hull.find_simplex(point_mm[None, :])[0] >= 0 else "outside"
-
-    z_low, z_high = pts[:, 2].min(), pts[:, 2].max()
-    t = (point_mm[2] - z_low) / max(z_high - z_low, 1e-9)
-    if t > 2.0 / 3.0:
-        return "upper"
-    if t < 1.0 / 3.0:
-        return "lower"
-    return "mid"
-
-
 def _flag(value) -> int | None:
     text = str(value).strip().lower()
     if text in ("1", "true", "yes"):
@@ -112,33 +109,60 @@ def _flag(value) -> int | None:
     return None
 
 
+def _number(value) -> float | None:
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _first_existing(*paths: Path) -> Path | None:
+    return next((p for p in paths if p.exists()), None)
+
+
+def _group_from_organs(organs_path: Path, side: str, point_mm) -> str:
+    import nibabel as nib
+
+    from stoneplanner.calyx import calyceal_group
+    from stoneplanner.segment import ORGAN_LABELS
+
+    img = nib.load(str(organs_path))
+    kidney = np.asarray(img.dataobj) == ORGAN_LABELS[f"kidney_{side}"]
+    return calyceal_group(np.array(point_mm, dtype=float), kidney, img.affine)
+
+
 def validate_case(case_dir: Path, case_id: str, manual: dict) -> dict:
     """One validation.csv row for one case."""
     row = {k: "" for k in COLUMNS}
     row["case_id"] = case_id
     row["operative_calyx"] = manual.get("operative_calyx", "").strip().lower()
     row["operative_supracostal"] = _flag(manual.get("operative_supracostal", ""))
+    stone_free = _flag(manual.get("stone_free", ""))
+    row["stone_free"] = "" if stone_free is None else stone_free
+    residual = 0.0 if stone_free == 1 else _number(manual.get("residual_mm", ""))
+    row["residual_mm"] = "" if residual is None else residual
     notes = []
     if row["operative_calyx"] not in GROUPS:
         notes.append(f"operative_calyx {row['operative_calyx']!r} not one of {GROUPS}")
 
-    stones_csv = case_dir / f"{case_id}_stones.csv"
+    stones_csv = _first_existing(case_dir / f"{case_id}_stones_corrected.csv",
+                                 case_dir / f"{case_id}_stones.csv")
     manual_volume = manual.get("manual_stone_volume_mm3", "").strip()
-    if stones_csv.exists() and manual_volume:
+    if stones_csv and manual_volume:
         auto = auto_volume(stones_csv, manual.get("laterality", ""))
         ref = float(manual_volume)
+        row["stones_source"] = "corrected" if "corrected" in stones_csv.name else "automatic"
         row["auto_volume_mm3"] = round(auto, 1)
         row["manual_volume_mm3"] = ref
         row["volume_pct_error"] = round(100.0 * (auto - ref) / ref, 2) if ref else ""
     else:
-        notes.append("no stones csv" if not stones_csv.exists() else "no manual volume")
+        notes.append("no stones csv" if not stones_csv else "no manual volume")
 
     tracts_json = case_dir / f"{case_id}_tracts.json"
-    organs_path = case_dir / f"{case_id}_organs.nii.gz"
+    organs_path = _first_existing(case_dir / f"{case_id}_organs_corrected.nii.gz",
+                                  case_dir / f"{case_id}_organs.nii.gz")
     if not tracts_json.exists():
         notes.append("no tracts json")
-    elif not organs_path.exists():
-        notes.append("no organ map")
     else:
         plan = json.loads(tracts_json.read_text())
         top = plan["tracts"][0] if plan.get("tracts") else None
@@ -147,25 +171,62 @@ def validate_case(case_dir: Path, case_id: str, manual: dict) -> dict:
             row["calyx_match"] = 0
             row["supracostal_match"] = 0
             notes.append("no collision-free tract")
+        elif not top.get("target_group") and organs_path is None:
+            notes.append("no organ map")
         else:
-            import nibabel as nib
-
-            from stoneplanner.segment import ORGAN_LABELS
-
-            img = nib.load(str(organs_path))
-            organs = np.asarray(img.dataobj)
-            kidney = organs == ORGAN_LABELS[f"kidney_{plan['side']}"]
-            group = calyceal_group(np.array(top["target_xyz_mm"]), kidney, img.affine)
+            group = top.get("target_group") or _group_from_organs(
+                organs_path, plan["side"], top["target_xyz_mm"])
             row["top_tract_group"] = group
+            row["top_tract_source"] = top.get("target_source", "")
             row["calyx_match"] = int(group == row["operative_calyx"])
             row["top_supracostal"] = int(bool(top["supracostal"]))
             if row["operative_supracostal"] is not None:
                 row["supracostal_match"] = int(row["top_supracostal"]
                                                == row["operative_supracostal"])
+        best = plan.get("best_by_group", {}).get(row["operative_calyx"])
+        if best is not None:
+            row["reach_operative_group"] = best["reachable_fraction"]
+            if best.get("flexible_reachable_fraction") is not None:
+                row["flex_reach_operative_group"] = best["flexible_reachable_fraction"]
+        elif "best_by_group" in plan:
+            notes.append(f"no clear tract to the {row['operative_calyx']} group")
+
+    corrections = case_dir / f"{case_id}_corrections.json"
+    if corrections.exists():
+        record = json.loads(corrections.read_text())
+        row["corrections_any"] = int(bool(record["any_edit"]))
+        row["organs_edited"] = " ".join(record["organs_edited"])
+        row["stones_edited"] = int(bool(record["stones"]["edited"]))
+
     if row["operative_supracostal"] is None:
         row["operative_supracostal"] = ""
     row["note"] = "; ".join(notes)
     return row
+
+
+def residual_statistics(rows: list[dict], column: str = "reach_operative_group") -> list[str]:
+    """AUC for stone-free vs residual, and Spearman's rho against residual size."""
+    from scipy import stats
+
+    lines = []
+    usable = [r for r in rows if r[column] != ""]
+    free = [float(r[column]) for r in usable if r["stone_free"] == 1]
+    resid = [float(r[column]) for r in usable if r["stone_free"] == 0]
+    if free and resid:
+        u, p = stats.mannwhitneyu(free, resid, alternative="two-sided")
+        auc = float(u) / (len(free) * len(resid))
+        lines.append(f"  AUC stone-free vs residual: {auc:.2f} (p = {p:.3f}; "
+                     f"n = {len(free)} free, {len(resid)} residual)")
+    else:
+        lines.append("  AUC stone-free vs residual: needs both stone-free and residual cases")
+    pairs = [(float(r[column]), float(r["residual_mm"])) for r in usable
+             if r["residual_mm"] != ""]
+    if len(pairs) >= 3 and len({b for _, b in pairs}) > 1 and len({a for a, _ in pairs}) > 1:
+        rho, p = stats.spearmanr(*zip(*pairs))
+        lines.append(f"  Spearman rho vs residual_mm: {rho:.2f} (p = {p:.3f}; n = {len(pairs)})")
+    else:
+        lines.append("  Spearman rho vs residual_mm: needs 3 or more varied cases")
+    return lines
 
 
 def summarize(rows: list[dict]) -> str:
@@ -175,8 +236,9 @@ def summarize(rows: list[dict]) -> str:
     lines = [f"Cases: {len(rows)}"]
     if errors:
         within = sum(e <= 10.0 for e in errors)
+        corrected = sum(r["stones_source"] == "corrected" for r in rows)
         lines += [
-            f"Volume, cases with both values: {len(errors)}",
+            f"Volume, cases with both values: {len(errors)} ({corrected} from corrected stones)",
             f"Mean absolute percent error: {statistics.mean(errors):.1f}",
             f"Median absolute percent error: {statistics.median(errors):.1f}",
             f"Within 10%: {within}/{len(errors)} ({100.0 * within / len(errors):.0f}%)",
@@ -193,6 +255,26 @@ def summarize(rows: list[dict]) -> str:
         lines.append(f"Supracostal concordance: {sum(supra)}/{len(supra)}")
     else:
         lines.append("Supracostal concordance: no cases with both values")
+
+    lines.append("Residual fragments, rigid reach of the best tract to the operative group:")
+    lines += residual_statistics(rows, "reach_operative_group")
+    lines.append("Residual fragments, flexible reach of the same tract:")
+    lines += residual_statistics(rows, "flex_reach_operative_group")
+
+    logged = [r for r in rows if r["corrections_any"] != ""]
+    if logged:
+        organ_counts = Counter(name for r in logged for name in r["organs_edited"].split())
+        lines.append(
+            f"Segmentation corrected: {sum(r['corrections_any'] for r in logged)}/{len(logged)} "
+            f"cases with a correction log (organs in "
+            f"{sum(bool(r['organs_edited']) for r in logged)}, stones in "
+            f"{sum(r['stones_edited'] for r in logged)})")
+        if organ_counts:
+            lines.append("Organs edited: " + ", ".join(
+                f"{name} {n}" for name, n in organ_counts.most_common()))
+    else:
+        lines.append("Segmentation corrected: no correction logs")
+
     skipped = [r["case_id"] for r in rows if r["note"]]
     if skipped:
         lines.append(f"Cases with notes (see validation.csv): {', '.join(skipped)}")
