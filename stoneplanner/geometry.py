@@ -55,14 +55,14 @@ respiratory phase, no vessels on NCCT, no collecting system on NCCT.
 Implementation notes (how the steps above are made concrete):
 
   - Organ label values come from PlanParams.organ_labels, keyed by
-    TotalSegmentator class name. The default is the "total" task class map of
-    TotalSegmentator 2.18. Organ groups match by name prefix, so the
-    collision organ "rib" covers rib_left_1 .. rib_right_12 and "lung" covers
-    every lung lobe.
+    TotalSegmentator class name. The default is segment.ORGAN_LABELS: the
+    "total" task class map of TotalSegmentator 2.18 plus segment.BODY_LABEL.
+    Organ groups match by name prefix, so the collision organ "rib" covers
+    rib_left_1 .. rib_right_12 and "lung" covers every lung lobe.
   - Body mask: if organ_labels has a "body" entry and that label occurs in the
-    organ map, every nonzero organ voxel is body. Otherwise threshold the CT
-    at body_hu_threshold, keep the largest component, fill holes per axial
-    slice, and union with the organ voxels.
+    organ map, every nonzero organ voxel is body. Otherwise use
+    segment.body_mask on the CT at body_hu_threshold, unioned with the organ
+    voxels.
   - Midline: median mediolateral position of the vertebra voxels.
     Mid-axillary line: the anteroposterior position of the most lateral
     operative-side rib voxels (the widest point of the rib cage).
@@ -101,37 +101,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-
-def _totalsegmentator_labels() -> dict[str, int]:
-    """Class IDs used here from the TotalSegmentator 2.18 "total" task."""
-    labels = {
-        "spleen": 1,
-        "kidney_right": 2,
-        "kidney_left": 3,
-        "liver": 5,
-        "lung_upper_lobe_left": 10,
-        "lung_lower_lobe_left": 11,
-        "lung_upper_lobe_right": 12,
-        "lung_middle_lobe_right": 13,
-        "lung_lower_lobe_right": 14,
-        "colon": 20,
-        "vertebrae_L5": 27,
-        "vertebrae_L4": 28,
-        "vertebrae_L3": 29,
-        "vertebrae_L2": 30,
-        "vertebrae_L1": 31,
-        "vertebrae_T12": 32,
-        "vertebrae_T11": 33,
-        "vertebrae_T10": 34,
-        "vertebrae_T9": 35,
-        "aorta": 52,
-        "hip_left": 77,
-        "hip_right": 78,
-    }
-    for i in range(1, 13):
-        labels[f"rib_left_{i}"] = 91 + i
-        labels[f"rib_right_{i}"] = 103 + i
-    return labels
+from stoneplanner import segment
 
 
 @dataclass
@@ -145,7 +115,7 @@ class PlanParams:
         default_factory=lambda: ["colon", "spleen", "liver", "lung", "rib"]
     )
     top_n: int = 10
-    organ_labels: dict[str, int] = field(default_factory=_totalsegmentator_labels)
+    organ_labels: dict[str, int] = field(default_factory=lambda: dict(segment.ORGAN_LABELS))
     body_hu_threshold: float = -500.0
     midaxillary_band_mm: float = 5.0
     rib_edge_bin_mm: float = 2.0
@@ -222,18 +192,8 @@ def _body_mask(ct: np.ndarray, organs: np.ndarray, affine: np.ndarray,
     body_label = params.organ_labels.get("body")
     if body_label is not None and np.any(organs == body_label):
         return organs > 0
-    mask = ct > params.body_hu_threshold
-    lab, n = ndimage.label(mask)
-    if n == 0:
-        return organs > 0
-    sizes = np.bincount(lab.ravel())
-    sizes[0] = 0
-    mask = lab == int(np.argmax(sizes))
-    axial = int(np.argmax(np.abs(affine[2, :3])))
-    mask = np.moveaxis(mask, axial, 0).copy()
-    for k in range(mask.shape[0]):
-        mask[k] = ndimage.binary_fill_holes(mask[k])
-    mask = np.moveaxis(mask, 0, axial)
+    mask = segment.body_mask(ct, tuple(np.linalg.norm(affine[:3, :3], axis=0)),
+                             int(np.argmax(np.abs(affine[2, :3]))), params.body_hu_threshold)
     return mask | (organs > 0)
 
 
