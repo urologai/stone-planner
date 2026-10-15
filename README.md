@@ -44,6 +44,21 @@ No patient is enrolled, examined, or treated at any phase. Everything is retrosp
 - Clinical judgment. The reach model has parameters (nephroscope sweep angle, depth) and the scoring has weights (how much to penalize a near-colon tract). These should come from surgeons, not from a programmer's guess. Argue with the defaults.
 - Code. If you write Python, the geometry engine and the Slicer module are where the work is.
 
+## What we need from each case
+
+Minimum per case for the 20-case Phase 1 set:
+
+- Preoperative noncontrast CT, full axial series as DICOM. Not the coronal or sagittal reformats alone, and not a screenshot or PDF. Thin slices if available, 1 to 3 mm. Note the slice thickness.
+- Patient position on the CT (supine is assumed) and whether it was done here or outside, since outside protocols vary.
+- Operative report, with these fields pulled out explicitly even if the narrative has them: laterality, OR position (prone or supine), number of tracts, and for each tract the calyceal group targeted (upper, mid, lower, or pelvis) and supracostal or subcostal. Sheath size and fluoroscopic versus ultrasound access are useful but not required.
+- Stone description from the surgeon's or radiologist's read: location, staghorn or not, largest dimension.
+- Postoperative imaging and stone-free status: the postop CT or KUB as DICOM if one exists, and a yes/no on residual fragments with size if present. This is the outcome the reach score gets tested against.
+- Complications relevant to tract choice: pleural injury, colon injury, transfusion. Expect zeros; record them anyway.
+- Age, sex, BMI. BMI matters because skin-to-stone distance is a model input.
+- A study ID key linking the de-identified case number to the MRN, kept off this repo and off any shared drive.
+
+Nice to have, not required for Phase 1: a manual stone volume measured by someone on the team, and the surgeon's own annotation of the puncture site on the preop CT.
+
 ## How to look at it
 
 Phase 1 runs inside 3D Slicer, a free desktop program for medical imaging. You load a case, run the module, and the top tracts appear as lines on the CT with their scores. Phase 2 adds a web viewer so you can review cases from a browser or phone without installing anything.
