@@ -3,11 +3,15 @@ import {
   api,
   manualCsvUrl,
   scanFolder,
+  workbookTemplateUrl,
   type CaseSummary,
+  type Clinical,
   type IngestResult,
   type LibraryCase,
   type ScanResult,
   type SeriesInfo,
+  type WorkbookResult,
+  type WorkbookRow,
 } from "./api";
 
 // One page for everything README.md asks for per case. Every clinical field is
@@ -176,6 +180,9 @@ function missing(f: Form, preop: boolean): string[] {
   if (!f.largest_mm) out.push("largest stone dimension");
   if (!f.stone_free) out.push("stone free");
   if (f.stone_free === "no" && !f.residual_mm) out.push("residual fragment size");
+  if (!f.pleural_injury) out.push("pleural injury");
+  if (!f.colon_injury) out.push("colon injury");
+  if (!f.transfusion) out.push("transfusion");
   if (!f.age) out.push("age");
   if (!f.sex) out.push("sex");
   if (!f.bmi) out.push("BMI");
@@ -183,6 +190,114 @@ function missing(f: Form, preop: boolean): string[] {
 }
 
 const num = (s: string) => (s.trim() === "" ? null : Number(s));
+
+const str = (v: string | number | null | undefined) => (v === null || v === undefined ? "" : String(v));
+const yesNo = (v: boolean | null): YesNo => (v === true ? "yes" : v === false ? "no" : "");
+
+/** The form filled from one workbook row; blanks stay blank so the form lists them. */
+function formFromRow(row: WorkbookRow, locations: string[]): Form {
+  const c: Clinical = row.clinical;
+  return {
+    case_id: row.case_id,
+    mrn: row.mrn,
+    ct_position: c.ct.position ?? "supine",
+    ct_site: str(c.ct.site),
+    laterality: str(c.operative.laterality),
+    or_position: str(c.operative.or_position),
+    tracts: c.operative.tracts.length > 0 ? c.operative.tracts.map((t) => ({ ...t }))
+      : [{ calyx: "", approach: "" }],
+    sheath_fr: str(c.operative.sheath_fr),
+    guidance: str(c.operative.guidance),
+    location: c.stone.location.filter((l) => locations.includes(l)),
+    staghorn: str(c.stone.staghorn),
+    largest_mm: str(c.stone.largest_mm),
+    manual_volume_mm3: str(c.stone.manual_volume_mm3),
+    stone_free: yesNo(c.postop.stone_free),
+    residual_mm: str(c.postop.residual_mm),
+    pleural_injury: yesNo(c.complications.pleural_injury),
+    colon_injury: yesNo(c.complications.colon_injury),
+    transfusion: yesNo(c.complications.transfusion),
+    age: str(c.demographics.age),
+    sex: str(c.demographics.sex),
+    bmi: str(c.demographics.bmi),
+  };
+}
+
+const STATUS_LABEL: Record<WorkbookRow["status"], string> = {
+  ready: "ready",
+  incomplete: "incomplete",
+  ingested: "already ingested",
+  conflict: "conflict",
+};
+
+function WorkbookImport({ onFill, ingested }: {
+  onFill: (row: WorkbookRow) => void;
+  ingested: string[];
+}) {
+  const [book, setBook] = useState<WorkbookResult | null>(null);
+  const [state, setState] = useState("");
+
+  async function load(file: File | undefined) {
+    if (!file) return;
+    setBook(null);
+    setState("Reading the workbook");
+    try {
+      const result = await api.importWorkbook(file);
+      setBook(result);
+      setState(`${result.rows.length} case row${result.rows.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      setState(err instanceof Error ? err.message : "Could not read that workbook");
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="row spread">
+        <h2>Import from the case workbook</h2>
+        <a className="button secondary" href={workbookTemplateUrl}>Download blank workbook</a>
+      </div>
+      <p className="muted small">
+        Fill the shared workbook on the university server, then choose it here. Nothing from it
+        is kept on this computer except what you ingest. Pick a row to fill the form below, then
+        choose the CT folder.
+      </p>
+      <label className="file">
+        Workbook (.xlsx)
+        <input type="file" accept=".xlsx" data-testid="workbook-input"
+          onChange={(e) => { load(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+      {state && <p className="muted small">{state}</p>}
+      {book && book.problems.map((p) => <p key={p} className="small error">{p}</p>)}
+      {book && book.rows.length > 0 && (
+        <table className="series" data-testid="workbook-table">
+          <thead>
+            <tr><th>Row</th><th>Study ID</th><th>Status</th><th>Still needed or wrong</th><th></th></tr>
+          </thead>
+          <tbody>
+            {book.rows.map((r) => {
+              // Cases ingested since the import count as ingested too.
+              const status = r.status !== "conflict" && ingested.includes(r.case_id)
+                ? "ingested" : r.status;
+              return (
+                <tr key={`${r.row}-${r.case_id}`}>
+                  <td>{r.row}</td>
+                  <td>{r.case_id}</td>
+                  <td className={status === "conflict" ? "error" : ""}>{STATUS_LABEL[status]}</td>
+                  <td className="small">{r.errors.join("; ")}</td>
+                  <td>
+                    <button className="secondary"
+                      disabled={status === "ingested" || status === "conflict"}
+                      onClick={() => onFill(r)}>Fill form</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
 
 export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void }) {
   const [form, setForm] = useState<Form>(EMPTY);
@@ -195,6 +310,7 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
   const [error, setError] = useState("");
   const [result, setResult] = useState<IngestResult | null>(null);
   const [height, setHeight] = useState("");
+  const [filled, setFilled] = useState<WorkbookRow | null>(null);
   const [weight, setWeight] = useState("");
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) =>
@@ -224,6 +340,18 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
   }
 
   const todo = missing(form, preop !== null);
+
+  function fillFromWorkbook(row: WorkbookRow) {
+    setForm(formFromRow(row, locations));
+    setPreop(null);
+    setPostop(null);
+    setHeight("");
+    setWeight("");
+    setResult(null);
+    setError("");
+    setFilled(row);
+    setFormKey((k) => k + 1);          // clears the folder pickers
+  }
 
   async function submit() {
     setBusy(true);
@@ -267,6 +395,7 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
       setPostop(null);
       setHeight("");
       setWeight("");
+      setFilled(null);
       setFormKey((k) => k + 1);          // clears the folder pickers
       window.scrollTo({ top: 0 });
     } catch (err) {
@@ -294,6 +423,16 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
         </div>
       )}
       {error && <p className="error">{error}</p>}
+
+      <WorkbookImport onFill={fillFromWorkbook} ingested={cases.map((c) => c.case_id)} />
+      {filled && (
+        <p className="card small" data-testid="filled-from">
+          Form filled from workbook row {filled.row} ({filled.case_id}). Choose the CT folder
+          {filled.postop_imaging && filled.postop_imaging !== "none"
+            ? ` and the postop ${filled.postop_imaging} folder` : ""}, check the form, then
+          press Ingest case.
+        </p>
+      )}
 
       <div className="ingest-grid" key={formKey}>
         <div>

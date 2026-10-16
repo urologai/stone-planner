@@ -98,7 +98,7 @@
 <body>
 <main>
   <h1>Stone planner workflow</h1>
-  <p class="lede">From a PACS export to a ranked PCNL tract and the validation report. Identifiable data stays on the computer that runs the ingest page; only the de-identified CT goes to the GPU service, and nothing is kept there.</p>
+  <p class="lede">From a PACS export and the shared case workbook to a ranked PCNL tract and the validation report. Identifiable data stays on the approved computer that runs the ingest page and in the workbook on the university server; only the de-identified CT goes to the GPU service, and nothing is kept there.</p>
   <div class="legend">
     <span><span class="sw disk"></span>saved on your computer</span>
     <span><span class="sw step"></span>step the software runs</span>
@@ -108,7 +108,7 @@
     <span><span class="sw out"></span>what the study tests</span>
   </div>
   <div class="scroller">
-<svg viewBox="0 0 980 1270" role="img" aria-label="Workflow of the stone planner: a preoperative CT export, postoperative imaging, the operative report and the MRN enter the local ingest page, which de-identifies the CT, records the clinical form, writes a case folder and manual.csv, and keeps the MRN in a separate key file. The de-identified CT is segmented on a GPU service, stones are detected, and the planner checks every candidate tract for collisions and stone reach, ranks them, and shows the top tracts for surgeon review. Saved results and manual.csv feed the validation report.">
+<svg viewBox="0 0 980 1270" role="img" aria-label="Workflow of the stone planner: a preoperative CT export, postoperative imaging, and a row of the shared case workbook (filled from the operative report and chart, with the MRN on its Key sheet) enter the local ingest page, which de-identifies the CT, records the clinical form, writes a case folder and manual.csv, and keeps the MRN in a separate key file. The de-identified CT is segmented on a GPU service, stones are detected, and the planner checks every candidate tract for collisions and stone reach, ranks them, and shows the top tracts for surgeon review. Saved results and manual.csv feed the validation report.">
       <defs>
         <marker id="arr" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0 L10 4 L0 8 z" fill="var(--muted)"/>
@@ -121,7 +121,7 @@
       <!-- ============ BAND 1 : INGEST ============ -->
       <rect x="8" y="8" width="964" height="422" rx="10" fill="var(--band)"/>
       <text class="bandtitle" x="28" y="38">1 · INGEST, ON YOUR COMPUTER</text>
-      <text class="subm rosetxt" x="952" y="38" text-anchor="end">identifiable data stays here</text>
+      <text class="subm rosetxt" x="952" y="38" text-anchor="end">identifiable: approved computer and university server only</text>
 
       <rect x="40" y="64" width="210" height="60" rx="6" fill="var(--rose-soft)" stroke="var(--rose)" stroke-width="1.5"/>
       <text class="node" x="145" y="88" text-anchor="middle">Preop CT study</text>
@@ -132,18 +132,20 @@
       <text class="sub" x="381" y="106" text-anchor="middle">DICOM, if one exists</text>
 
       <rect x="512" y="64" width="210" height="60" rx="6" fill="var(--rose-soft)" stroke="var(--rose)" stroke-width="1.5"/>
-      <text class="node" x="617" y="88" text-anchor="middle">Op report and chart</text>
-      <text class="sub" x="617" y="106" text-anchor="middle">you read them</text>
+      <text class="node" x="617" y="88" text-anchor="middle">Case workbook</text>
+      <text class="sub" x="617" y="106" text-anchor="middle">Excel, on the university server</text>
 
       <rect x="748" y="64" width="210" height="60" rx="6" fill="var(--rose-soft)" stroke="var(--rose)" stroke-width="1.5"/>
-      <text class="node" x="853" y="88" text-anchor="middle">MRN</text>
-      <text class="sub" x="853" y="106" text-anchor="middle">typed once per case</text>
+      <text class="node" x="853" y="88" text-anchor="middle">Op report and chart</text>
+      <text class="sub" x="853" y="106" text-anchor="middle">colleagues read them</text>
 
       <path d="M145 124 V174" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
       <path d="M381 124 V150 H185 V174" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
       <text class="edge" x="195" y="166">private temp folder, deleted after</text>
       <path d="M617 124 V174" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
-      <path d="M853 124 V174" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
+      <path d="M748 94 H724" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
+      <path d="M690 124 V150 H853 V174" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>
+      <text class="edge" x="700" y="166">MRN, study ID</text>
 
       <rect x="40" y="176" width="210" height="64" rx="6" fill="var(--panel)" stroke="var(--line)"/>
       <text class="node" x="145" y="200" text-anchor="middle">Folder scan</text>
@@ -157,12 +159,12 @@
 
       <rect x="512" y="176" width="210" height="64" rx="6" fill="var(--panel)" stroke="var(--line)"/>
       <text class="node" x="617" y="200" text-anchor="middle">Clinical form</text>
-      <text class="sub" x="617" y="218" text-anchor="middle">choices and numbers only</text>
-      <text class="subm" x="617" y="232" text-anchor="middle">no free text</text>
+      <text class="sub" x="617" y="218" text-anchor="middle">filled from a workbook row</text>
+      <text class="subm" x="617" y="232" text-anchor="middle">choices, numbers, no free text</text>
 
       <rect x="748" y="176" width="210" height="64" rx="6" fill="var(--panel)" stroke="var(--line)"/>
-      <text class="node" x="853" y="200" text-anchor="middle">Next study ID</text>
-      <text class="sub" x="853" y="218" text-anchor="middle">case_001, case_002, ...</text>
+      <text class="node" x="853" y="200" text-anchor="middle">Study ID</text>
+      <text class="sub" x="853" y="218" text-anchor="middle">from the workbook's Key sheet</text>
       <text class="subm" x="853" y="232" text-anchor="middle">MRN goes to the key only</text>
 
       <path d="M250 208 H274" fill="none" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#arr)"/>

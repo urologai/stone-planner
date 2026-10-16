@@ -25,9 +25,9 @@ The segmentation is AI. The tract ranking is geometry. We think the geometry is 
   <img src="docs/diagrams/workflow-graph-light.svg" alt="Workflow of the stone planner in five bands. Ingest, on your computer: the preop CT, postop imaging, operative report and MRN go into a folder scan, de-identification, a clinical form and a study ID; you check and save, which writes a case folder, manual.csv, and a separate MRN key file. Segmentation: the de-identified CT goes to a GPU service and comes back as an organ map, and stones are detected. Planning: targets, skin entry points and parameters feed a collision check and rigid and flexible reach for every tract, which are ranked. Review: the planner view shows the top tracts, you review and correct them, and the results are saved to the case folder. Validation: the saved results and manual.csv produce the validation report.">
 </picture>
 
-Rose marks identifiable data: the DICOM export, the chart and the MRN. It stays on the computer that runs the ingest page. Amber marks the places where you decide: before a case is saved, the planner parameters, and the review of the tracts. Teal marks what the study tests: the ranked tracts and the validation report. Dashed shapes keep nothing: the GPU service gets a de-identified CT, returns the organ map and keeps neither. A standalone version of the diagram is in [docs/diagrams/workflow-graph.html](docs/diagrams/workflow-graph.html).
+Rose marks identifiable data: the DICOM export, the chart, the case workbook and the MRN key. It stays in the workbook on the university server and on the approved computer that runs the ingest page. Amber marks the places where you decide: before a case is saved, the planner parameters, and the review of the tracts. Teal marks what the study tests: the ranked tracts and the validation report. Dashed shapes keep nothing: the GPU service gets a de-identified CT, returns the organ map and keeps neither. A standalone version of the diagram is in [docs/diagrams/workflow-graph.html](docs/diagrams/workflow-graph.html).
 
-1. **Ingest.** You choose the exported CT study folder. The page lists every series, picks the axial CT and shows its slice thickness. It removes identifiers from the image headers and warns if text may be burned into the pixels. You fill in the case form from the operative report and chart. The case gets the next study ID (case_001, case_002, ...), and the MRN goes only into a key file kept in a separate folder.
+1. **Ingest.** You choose the exported CT study folder. The page lists every series, picks the axial CT and shows its slice thickness. It removes identifiers from the image headers and warns if text may be burned into the pixels. The clinical data comes from a shared Excel workbook that colleagues fill in from the operative report and chart; picking a row fills the case form. The workbook's Key sheet assigns the study ID (case_001, case_002, ...). On this computer the MRN goes only into a key file kept in a separate folder, never into the case folder.
 2. **Segmentation.** The de-identified CT goes to a GPU service, which outlines the kidneys and surrounding organs and keeps nothing. Stones are found as dense voxels inside the kidney, with their volume and density.
 3. **Planning.** For every pair of skin entry point and target, the planner checks whether the tract hits colon, spleen, liver, lung or rib (any hit rules it out) and how much of the stone a rigid scope reaches from it. Closeness to colon and pleura, a supracostal entry, and other penalties lower the score. The parameters behind these are placeholders until surgeons set them.
 4. **Review.** You see the CT with organs, stones and the top three tracts, and a ranked table. If the segmentation is wrong, fix it in 3D Slicer; the corrections are logged. Saving writes the results into the case folder so nothing is recomputed.
@@ -109,7 +109,23 @@ The tool runs on your own computer in a free program called Docker, which packag
 
 To get an update: `cd ~/stone-planner`, then `git pull`, then `docker build -t stone-planner .` again.
 
+### Collect the data (shared workbook)
+
+The clinical data for each case goes in one Excel workbook that the team keeps on the approved university server. It holds MRNs, so keep it there: do not email it or copy it to a laptop or personal cloud drive.
+
+1. On the Ingest tab, press Download blank workbook and save it to the university server. The Instructions sheet explains every column and where to find it.
+2. Key sheet: type each patient's MRN next to the next free study ID. Never change a study ID once it has an MRN. A duplicate MRN turns red.
+3. Lookup sheet: type an MRN to find its study ID, or a study ID to find its MRN.
+4. Cases sheet: one row per case. Choose the study ID, then fill the yellow cells from the dropdowns. Row 2 is an example. The last column, Still needed, lists what is missing until it says complete.
+
+The Cases sheet has no MRN on it, so a copy of that sheet alone is de-identified.
+
 ### Enter a case (Ingest tab)
+
+From the workbook: under Import from the case workbook, choose the workbook file. Each case row is listed as ready, incomplete (with what is missing), already ingested, or conflict (the study ID is linked to a different MRN on this computer; check which patient it is before going further). Press Fill form on a row. The form fills in, including the study ID and MRN, and you only need steps 1, 3, 6 (the folders), 9 and 10 below. The workbook itself is not kept on this computer.
+
+Without the workbook, fill the form by hand:
+
 
 1. From PACS, export the preoperative noncontrast CT study to a folder as DICOM. The whole study is fine; the page picks the axial series. File names do not matter and are not kept.
 2. The case ID is filled in for you. Type the MRN.
