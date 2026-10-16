@@ -42,7 +42,7 @@ Segmentation takes minutes per case on CPU. MPS on Apple Silicon is unverified.
 ## In 3D Slicer
 
 1. Install the package into Slicer's Python, from the Python console: `slicer.util.pip_install("-e /path/to/stone-planner")`. TotalSegmentator is installed with it.
-2. Edit > Application Settings > Modules > Additional module paths: add the `StonePlanner` folder of this repo. Restart. The module is under "Research".
+2. Edit > Application Settings > Modules > Additional module paths: add the `slicer_module` folder of this repo. Restart. The module is under "Research".
 3. Load `case_001.nii.gz` and select it. Press Run segmentation, or, if `stoneplanner-segment` already ran on this case, Load segmentation files (it reads `case_001_organs.nii.gz` and `case_001_stones.nii.gz` from the CT's folder; much faster).
 4. Fix organs and stones in Segment Editor. Keep organ segment names as they are; the planner reads label values from them. Stones can be added, removed or painted.
 5. Choose targets (both, calyx, stone). To aim at a calyx you pick yourself, place points in a point list and choose it under Manual targets. A parameters file is optional.

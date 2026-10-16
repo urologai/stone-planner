@@ -6,7 +6,7 @@ Phase 2 scope: posterior calyx proxy with manual target pick, soft penalties and
 
 Clinical defaults (penalty weights, margins, calyx angle and depth, flexible-scope sweep) are placeholders until surgeons set them. Keep every one a PlanParams field, written into the output JSON.
 
-Module contracts are in the docstrings of stoneplanner/ingest.py, segment.py, geometry.py, calyx.py, corrections.py, StonePlanner/StonePlanner.py, scripts/validate.py, stoneplanner_api/__init__.py and modal_app/segment_gpu.py. Implement to those contracts; change a contract only with a reason stated in the commit message.
+Module contracts are in the docstrings of stoneplanner/ingest.py, segment.py, geometry.py, calyx.py, corrections.py, slicer_module/StonePlanner.py, scripts/validate.py, stoneplanner_api/__init__.py and modal_app/segment_gpu.py. Implement to those contracts; change a contract only with a reason stated in the commit message.
 
 Rules:
 - No imaging data in the repo, ever. .gitignore blocks it; do not weaken that.
