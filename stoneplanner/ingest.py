@@ -66,9 +66,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -335,11 +337,24 @@ def detect_burned_in_text(dicom_dir: Path, kinds: tuple[str, ...] = ("ct",)) -> 
 # Conversion
 
 
-def _dcm2niix(dicom_dir: Path):
+def find_dcm2niix() -> str | None:
+    """dcm2niix on PATH, or next to the running Python.
+
+    The pip package installs it beside the interpreter (.venv/bin), which is
+    not on PATH when the planner is started by launchd rather than a shell.
+    """
+    found = shutil.which("dcm2niix")
+    if found:
+        return found
+    beside = Path(sys.executable).parent / "dcm2niix"
+    return str(beside) if beside.is_file() and os.access(beside, os.X_OK) else None
+
+
+def _dcm2niix(dicom_dir: Path, exe: str = "dcm2niix"):
     import nibabel as nib
 
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = ["dcm2niix", "-z", "n", "-b", "n", "-f", "series", "-o", tmp, str(dicom_dir)]
+        cmd = [exe, "-z", "n", "-b", "n", "-f", "series", "-o", tmp, str(dicom_dir)]
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         outputs = sorted(Path(tmp).glob("*.nii"))
         if result.returncode != 0 or not outputs:
@@ -393,7 +408,8 @@ def convert_to_nifti(dicom_dir: Path, out_path: Path) -> Path:
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    img = _dcm2niix(dicom_dir) if shutil.which("dcm2niix") else _simpleitk(dicom_dir)
+    exe = find_dcm2niix()
+    img = _dcm2niix(dicom_dir, exe) if exe else _simpleitk(dicom_dir)
     nib.save(_canonical_hu(img), str(out_path))
     return out_path
 
