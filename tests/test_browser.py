@@ -276,3 +276,43 @@ def test_ingest_page(local_page, local_server, tmp_path):
     assert not csp, csp
     errors = [p for p in pg.problems if p.startswith("page error")]
     assert not errors, errors
+
+
+def test_ingest_from_workbook(local_page, local_server, tmp_path):
+    from test_workbook import COMPLETE, fill
+
+    expect = playwright_api.expect
+    pg = local_page
+    _, data, key = local_server
+    book = tmp_path / "cases.xlsx"
+    book.write_bytes(fill({"case_005": "WB555"}, [{"case_id": "case_005", **COMPLETE}]))
+    write_phantom_series(tmp_path / "study" / "axial")
+
+    pg.get_by_label("Password").fill(PASSWORD)
+    pg.get_by_role("button", name="Log in").click()
+    pg.get_by_test_id("workbook-input").set_input_files(book)
+    row = pg.get_by_test_id("workbook-table").locator("tbody tr").first
+    expect(row).to_contain_text("case_005")
+    expect(row).to_contain_text("ready")
+    row.get_by_role("button", name="Fill form").click()
+
+    expect(pg.get_by_test_id("filled-from")).to_contain_text("postop kub folder")
+    expect(pg.get_by_label("Case ID")).to_have_value("case_005")
+    expect(pg.get_by_label("MRN")).to_have_value("WB555")
+    expect(pg.get_by_label("Tract 2 calyceal group")).to_have_value("upper")
+    expect(pg.get_by_label("BMI", exact=True)).to_have_value("31.2")
+    # Only the CT folder is left to give.
+    expect(pg.get_by_test_id("ingest-missing")).to_have_text(
+        "Still needed: preoperative CT series.")
+
+    pg.get_by_test_id("preop-folder").set_input_files(tmp_path / "study")
+    expect(pg.get_by_test_id("ingest-missing")).to_have_count(0, timeout=60_000)
+    pg.get_by_role("button", name="Ingest case").click()
+    expect(pg.get_by_test_id("ingest-result")).to_contain_text("case_005 ingested",
+                                                               timeout=120_000)
+    expect(row).to_contain_text("already ingested")
+    assert (data / "case_005" / "case_005.nii.gz").exists()
+    assert "WB555" in key.read_text()
+
+    errors = [p for p in pg.problems if p.startswith("page error")]
+    assert not errors, errors

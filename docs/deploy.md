@@ -90,6 +90,8 @@ python scripts/validate.py ~/stone-data ~/stone-data/manual.csv ~/stone-report
 
 `MAX_INGEST_MB` (default 4000) caps one folder upload.
 
+The shared case workbook (Excel) comes from the same page: Download blank workbook builds it from `stoneplanner_api/workbook.py`, whose column list also drives the import, so the dropdowns and the form's validation stay in step. Import workbook reads a filled copy and returns its rows to the page; nothing from it is written to disk until a case is ingested. A study ID that this computer's key file already links to a different MRN is refused, on import and on ingest. To make a blank workbook without the app: `python -m stoneplanner_api.workbook stone-planner-cases.xlsx`.
+
 ## Tests
 
 ```

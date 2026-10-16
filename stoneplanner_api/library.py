@@ -243,6 +243,14 @@ class Library:
         with self.key_file.open(newline="") as f:
             return list(csv.DictReader(f))
 
+    def key_conflict(self, case_id: str, mrn: str) -> str | None:
+        """Why case_id cannot be used for this MRN, if the key file links it elsewhere."""
+        linked = {r["case_id"]: r["mrn"] for r in self._key_rows()}
+        if case_id in linked and linked[case_id] != mrn:
+            return (f"this computer's key file already links {case_id} to a different MRN; "
+                    "the workbook and the key disagree, so check which patient it is")
+        return None
+
     def _append_key(self, case_id: str, mrn: str) -> None:
         new = not self.key_file.exists()
         with self.key_file.open("a", newline="") as f:
@@ -261,6 +269,9 @@ class Library:
         folder = self.case_dir(case_id)
         if folder.exists():
             raise LibraryError(f"{case_id} already exists")
+        conflict = self.key_conflict(case_id, mrn)
+        if conflict:
+            raise LibraryError(conflict)
         notes = []
         if any(row["mrn"] == mrn for row in self._key_rows()):
             linked = [r["case_id"] for r in self._key_rows() if r["mrn"] == mrn]

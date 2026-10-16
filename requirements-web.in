@@ -1,8 +1,8 @@
 # Runtime dependencies of the web image (Dockerfile). The planner core, the API,
 # and DICOM ingest for the local ingest page (pydicom, dcm2niix, JPEG decoders
 # for compressed PACS exports); no PyTorch or TotalSegmentator, which run on
-# Modal. Regenerate the
-# hash-pinned lock with:
+# Modal. openpyxl reads and writes the shared case workbook; defusedxml makes
+# its XML parsing refuse entity tricks. Regenerate the hash-pinned lock with:
 #   uv pip compile requirements-web.in --generate-hashes --python-version 3.13 \
 #       --python-platform x86_64-manylinux_2_28 -o requirements-web.txt
 numpy>=1.24
@@ -19,3 +19,5 @@ dcm2niix>=1.0.20250506
 pylibjpeg>=2.0
 pylibjpeg-libjpeg>=2.3
 pylibjpeg-openjpeg>=2.4
+openpyxl>=3.1
+defusedxml>=0.7

@@ -60,6 +60,9 @@ from stoneplanner_api.library import STONE_LOCATIONS, Library, LibraryError
 from stoneplanner_api.overlay import DISPLAY_GROUPS
 from stoneplanner_api.segmentation import Segmenter, modal_segmenter
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
+
 SERVED = {"ct", "organs", "organs_display", "stones", "overlay", "tracts_json", "tracts_csv",
           "stones_csv"}
 DOWNLOAD_NAMES = {"tracts_json": "{}_tracts.json", "tracts_csv": "{}_tracts.csv",
@@ -343,6 +346,36 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
                             body.get("clinical") or {}, body.get("postop") or None,
                             body.get("case_id") or None)
         return {**result, "cases": lib.list_cases(), "next_case_id": lib.next_case_id()}
+
+    @app.get("/api/ingest/workbook.xlsx")
+    def ingest_workbook_template(_sid: str = Depends(session)):
+        need_library()
+        from stoneplanner_api import workbook
+
+        return Response(workbook.build_template(), media_type=XLSX, headers={
+            "Content-Disposition": 'attachment; filename="stone-planner-cases.xlsx"'})
+
+    @app.post("/api/ingest/workbook")
+    async def ingest_workbook(file: UploadFile = File(...), _sid: str = Depends(session)):
+        """Read a filled case workbook. Nothing is kept: the rows go back to the page."""
+        lib = need_library()
+        from stoneplanner_api import workbook
+
+        data = await file.read(MAX_WORKBOOK_BYTES + 1)
+        if len(data) > MAX_WORKBOOK_BYTES:
+            raise HTTPException(413, "workbook is larger than 20 MB")
+        parsed = workbook.parse_workbook(data)
+        existing = set(lib.case_ids())
+        for row in parsed["rows"]:
+            conflict = row["mrn"] and lib.key_conflict(row["case_id"], row["mrn"])
+            if conflict:
+                row["errors"].insert(0, conflict)
+                row["status"] = "conflict"
+            elif row["case_id"] in existing:
+                row["status"] = "ingested"
+            else:
+                row["status"] = "incomplete" if row["errors"] else "ready"
+        return parsed
 
     @app.get("/api/ingest/manual.csv")
     def ingest_manual(_sid: str = Depends(session)):

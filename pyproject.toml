@@ -24,7 +24,8 @@ ingest = ["pydicom>=3.0", "SimpleITK>=2.3"]
 segment = ["TotalSegmentator>=2.18,<3"]
 web = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9",
        "itsdangerous>=2.2", "modal>=1.0", "pydicom>=3.0", "dcm2niix>=1.0.20250506",
-       "pylibjpeg>=2.0", "pylibjpeg-libjpeg>=2.3", "pylibjpeg-openjpeg>=2.4"]
+       "pylibjpeg>=2.0", "pylibjpeg-libjpeg>=2.3", "pylibjpeg-openjpeg>=2.4",
+       "openpyxl>=3.1", "defusedxml>=0.7"]
 dev = ["pytest>=7", "ruff>=0.4", "httpx>=0.27", "pydicom>=3.0", "SimpleITK>=2.3",
        "playwright>=1.48"]
 

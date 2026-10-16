@@ -94,6 +94,45 @@ export type IngestResult = {
   next_case_id: string;
 };
 
+/** The clinical part of POST /api/ingest/cases. Values from a workbook row can
+ * be missing (null) or wrong (a string where a number belongs); the form shows
+ * what is left to fix. */
+export type Clinical = {
+  ct: { position: string | null; site: string | null };
+  operative: {
+    laterality: string | null;
+    or_position: string | null;
+    tracts: { calyx: string; approach: string }[];
+    sheath_fr: number | string | null;
+    guidance: string | null;
+  };
+  stone: {
+    location: string[];
+    staghorn: string | null;
+    largest_mm: number | string | null;
+    manual_volume_mm3: number | string | null;
+  };
+  postop: { stone_free: boolean | null; residual_mm: number | string | null };
+  complications: {
+    pleural_injury: boolean | null;
+    colon_injury: boolean | null;
+    transfusion: boolean | null;
+  };
+  demographics: { age: number | string | null; sex: string | null; bmi: number | string | null };
+};
+
+export type WorkbookRow = {
+  row: number;
+  case_id: string;
+  mrn: string;
+  clinical: Clinical;
+  errors: string[];
+  postop_imaging: string | null;
+  status: "ready" | "incomplete" | "ingested" | "conflict";
+};
+
+export type WorkbookResult = { rows: WorkbookRow[]; problems: string[] };
+
 export type ParamField = { name: string; default: unknown };
 
 export class ApiError extends Error {
@@ -149,6 +188,11 @@ export const api = {
   ingestCase: (body: unknown) => request<IngestResult>("/api/ingest/cases", json(body)),
   openLibraryCase: (caseId: string) =>
     request<CaseSummary>(`/api/ingest/cases/${caseId}/open`, { method: "POST" }),
+  importWorkbook: (file: File) => {
+    const form = new FormData();
+    form.append("file", file, "workbook.xlsx");
+    return request<WorkbookResult>("/api/ingest/workbook", { method: "POST", body: form });
+  },
   saveToLibrary: (id: string) =>
     request<{ written: string[] }>(`/api/cases/${id}/save-to-library`, { method: "POST" }),
 };
@@ -178,6 +222,7 @@ export function scanFolder(files: File[], onProgress: (f: number) => void): Prom
 }
 
 export const manualCsvUrl = "/api/ingest/manual.csv";
+export const workbookTemplateUrl = "/api/ingest/workbook.xlsx";
 
 export const fileUrl = (id: string, key: string) => `/api/cases/${id}/files/${key}`;
 export const bundleUrl = (id: string) => `/api/cases/${id}/bundle`;
