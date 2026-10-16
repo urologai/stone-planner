@@ -316,3 +316,44 @@ def test_ingest_from_workbook(local_page, local_server, tmp_path):
 
     errors = [p for p in pg.problems if p.startswith("page error")]
     assert not errors, errors
+
+
+def test_admin_page(local_page, local_server, tmp_path):
+    from test_workbook import COMPLETE, fill
+
+    expect = playwright_api.expect
+    pg = local_page
+    book = tmp_path / "OneDrive" / "cases.xlsx"
+    book.parent.mkdir()
+    book.write_bytes(fill({"case_009": "AD909"}, [{"case_id": "case_009", **COMPLETE}]))
+
+    pg.get_by_label("Password").fill(PASSWORD)
+    pg.get_by_role("button", name="Log in").click()
+    pg.get_by_test_id("tab-admin").click()
+    expect(pg.get_by_test_id("saved-provider")).to_have_text("Off")
+
+    pg.get_by_test_id("provider").get_by_label("Home PC GPU").check()
+    pg.get_by_test_id("remote-url").fill("http://127.0.0.1:9")       # nothing listens
+    pg.get_by_test_id("remote-token").fill("z" * 40)
+    pg.get_by_role("button", name="Save").first.click()
+    expect(pg.get_by_test_id("saved-provider")).to_have_text("Home PC GPU")
+    expect(pg.get_by_test_id("remote-token")).to_have_attribute(
+        "placeholder", "saved; type to replace")
+    expect(pg.get_by_test_id("remote-token")).to_have_value("")    # never sent back
+    pg.get_by_role("button", name="Check connection").click()
+    expect(pg.get_by_test_id("check-result")).to_contain_text("not reachable")
+
+    pg.get_by_test_id("workbook-path").fill(str(book))
+    pg.get_by_role("button", name="Save").last.click()
+    pg.get_by_role("button", name="Check workbook").click()
+    expect(pg.get_by_test_id("workbook-check")).to_contain_text("1 case rows, 1 ready")
+
+    # The Ingest tab now reads the linked workbook without choosing a file.
+    pg.get_by_test_id("tab-ingest").click()
+    pg.get_by_test_id("load-linked").click()
+    row = pg.get_by_test_id("workbook-table").locator("tbody tr").first
+    expect(row).to_contain_text("case_009")
+    expect(row).to_contain_text("ready")
+
+    errors = [p for p in pg.problems if p.startswith("page error")]
+    assert not errors, errors

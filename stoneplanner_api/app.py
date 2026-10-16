@@ -34,6 +34,8 @@ import asyncio
 import contextlib
 import json
 import shutil
+import threading
+import time
 from pathlib import Path
 
 import nibabel as nib
@@ -41,6 +43,8 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, Up
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from stoneplanner_api.admin import AdminStore, build_segmenter
+from stoneplanner_api.admin import check as check_segmentation
 from stoneplanner_api.auth import COOKIE_NAME, Auth
 from stoneplanner_api.cases import FILES, Case, CaseError, CaseStore, case_label, load_nifti
 from stoneplanner_api.config import Settings
@@ -62,6 +66,35 @@ from stoneplanner_api.segmentation import Segmenter, modal_segmenter
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
+SNAPSHOT_RETRY_S = 2.0
+
+
+def read_snapshot(path: Path) -> bytes:
+    """Bytes of a workbook that a sync client (OneDrive) may be rewriting.
+
+    Reads twice and keeps a read only if the size held still; one retry after a
+    pause. The file is opened read-only and never written.
+    """
+    for attempt in range(2):
+        try:
+            before = path.stat().st_size
+            if before > MAX_WORKBOOK_BYTES:
+                raise LibraryError("the linked workbook is larger than 20 MB")
+            data = path.read_bytes()
+            if before and len(data) == before == path.stat().st_size:
+                return data
+        except FileNotFoundError as exc:
+            raise LibraryError(f"no file at {path}. Check the path on the Admin page.") from exc
+        except PermissionError as exc:
+            raise LibraryError(f"cannot read {path}: permission denied") from exc
+        except OSError as exc:
+            if attempt:
+                raise LibraryError(
+                    f"could not read {path} ({exc}). If it is in OneDrive, set the folder to "
+                    "Always keep on this device.") from exc
+        time.sleep(SNAPSHOT_RETRY_S)
+    raise LibraryError(f"{path} kept changing while being read (OneDrive may be syncing); "
+                       "try again in a moment")
 
 SERVED = {"ct", "organs", "organs_display", "stones", "overlay", "tracts_json", "tracts_csv",
           "stones_csv"}
@@ -87,12 +120,25 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
     auth = Auth(settings.secret_key, settings.app_password, settings.session_hours)
     store = CaseStore(settings.work_dir, settings.case_ttl_minutes)
     jobs = Jobs(settings.plan_workers)
+    env_segmenter = None
     if segmenter is None and settings.modal_configured:
-        segmenter = modal_segmenter(settings.modal_app_name, settings.modal_function_name)
+        env_segmenter = modal_segmenter(settings.modal_app_name, settings.modal_function_name)
     max_bytes = settings.max_upload_mb * 1024 * 1024
-    library = None
+    library = admin = None
     if settings.data_dir is not None and settings.key_file is not None:
         library = Library(settings.data_dir, settings.key_file)
+        admin = AdminStore(settings.settings_file or
+                           Path(settings.key_file).parent / "stoneplanner-settings.json",
+                           settings.data_dir)
+
+    def current_segmenter() -> Segmenter | None:
+        """A segmenter passed in (tests) wins; then the admin page's choice on a local
+        install; then the environment (hosted)."""
+        if segmenter is not None:
+            return segmenter
+        if admin is not None:
+            return build_segmenter(admin.load())
+        return env_segmenter
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -176,7 +222,7 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
     @app.get("/api/health")
     def health():
         return {"ok": True, "auth_configured": auth.configured,
-                "segmentation_configured": segmenter is not None}
+                "segmentation_configured": current_segmenter() is not None}
 
     @app.post("/api/login")
     async def login(request: Request, response: Response):
@@ -197,7 +243,7 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
     @app.get("/api/session")
     def get_session(request: Request):
         return {"authenticated": auth.session_id(request) is not None,
-                "segmentation_configured": segmenter is not None}
+                "segmentation_configured": current_segmenter() is not None}
 
     # -- cases -----------------------------------------------------------------
 
@@ -248,11 +294,14 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
 
     @app.post("/api/cases/{case_token}/segment", status_code=202)
     def segment_case(case: Case = Depends(owned)):
-        if segmenter is None:
-            raise HTTPException(503, "GPU segmentation is not configured on this server. "
-                                     "Segment locally and upload the organ and stone maps.")
+        seg = current_segmenter()
+        if seg is None:
+            how = ("Choose where it runs on the Admin page, or segment elsewhere and upload "
+                   "the organ and stone maps." if admin is not None else
+                   "Segment locally and upload the organ and stone maps.")
+            raise HTTPException(503, f"GPU segmentation is not configured on this server. {how}")
         try:
-            jobs.submit(case.token, "segment", run_segmentation, store, case, segmenter)
+            jobs.submit(case.token, "segment", run_segmentation, store, case, seg)
         except JobBusy as exc:
             raise HTTPException(409, str(exc)) from exc
         return summary(case)
@@ -304,7 +353,8 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
         if library is None:
             return {"enabled": False}
         return {"enabled": True, "next_case_id": library.next_case_id(),
-                "cases": library.list_cases(), "stone_locations": list(STONE_LOCATIONS)}
+                "cases": library.list_cases(), "stone_locations": list(STONE_LOCATIONS),
+                "workbook_linked": bool(admin and admin.load().workbook_path)}
 
     @app.post("/api/ingest/scan")
     async def ingest_scan(request: Request, _sid: str = Depends(session)):
@@ -364,7 +414,21 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
         data = await file.read(MAX_WORKBOOK_BYTES + 1)
         if len(data) > MAX_WORKBOOK_BYTES:
             raise HTTPException(413, "workbook is larger than 20 MB")
-        parsed = workbook.parse_workbook(data)
+        return with_status(lib, workbook.parse_workbook(data))
+
+    @app.get("/api/ingest/workbook/linked")
+    def ingest_workbook_linked(_sid: str = Depends(session)):
+        """Read the workbook at the path set on the Admin page (the OneDrive copy)."""
+        lib = need_library()
+        from stoneplanner_api import workbook
+
+        path = admin.load().workbook_path
+        if not path:
+            raise LibraryError("no workbook is linked; set its path on the Admin page")
+        parsed = workbook.parse_workbook(read_snapshot(Path(path)))
+        return {**with_status(lib, parsed), "path": path}
+
+    def with_status(lib: Library, parsed: dict) -> dict:
         existing = set(lib.case_ids())
         for row in parsed["rows"]:
             conflict = row["mrn"] and lib.key_conflict(row["case_id"], row["mrn"])
@@ -376,6 +440,93 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
             else:
                 row["status"] = "incomplete" if row["errors"] else "ready"
         return parsed
+
+    # -- admin page (local install only) ---------------------------------------
+
+    test_state: dict = {"state": "idle"}
+    test_lock = threading.Lock()
+
+    def need_admin() -> AdminStore:
+        need_library()
+        return admin
+
+    def admin_view() -> dict:
+        s = admin.load()
+        return {"settings": s.public(),
+                "paths": {"data_dir": str(library.data_dir), "key_file": str(library.key_file),
+                          "settings_file": str(admin.path)},
+                "segmentation_configured": current_segmenter() is not None,
+                "segmenter_overridden": segmenter is not None}
+
+    @app.get("/api/admin")
+    def admin_get(_sid: str = Depends(session)):
+        need_admin()
+        return admin_view()
+
+    @app.put("/api/admin")
+    def admin_put(body: dict, _sid: str = Depends(session)):
+        need_admin().update(body)
+        return admin_view()
+
+    @app.post("/api/admin/segmentation/check")
+    def admin_check(_sid: str = Depends(session)):
+        if segmenter is not None:
+            return {"ok": True, "detail": "A test segmenter is in use (development only)."}
+        return check_segmentation(need_admin().load())
+
+    def test_ct() -> tuple[bytes, str]:
+        """The newest ingested case's de-identified CT, or the synthetic phantom."""
+        for case_id in reversed(library.case_ids()):
+            path = library.case_dir(case_id) / f"{case_id}.nii.gz"
+            if path.exists():
+                return path.read_bytes(), case_id
+        import gzip
+
+        from stoneplanner import phantom
+
+        ct, _, _ = phantom.make_phantom()
+        img = nib.Nifti1Image(ct.astype("int16"), phantom.AFFINE)
+        return gzip.compress(img.to_bytes()), "synthetic phantom"
+
+    def run_test(seg: Segmenter) -> None:
+        start = time.monotonic()
+        try:
+            data, source = test_ct()
+            test_state.update(source=source)
+            out = load_nifti(seg(data), "segmentation result")
+            ct = load_nifti(data, "test CT")
+            if out.shape != ct.shape:
+                raise CaseError(f"result shape {out.shape} does not match the CT {ct.shape}")
+            import numpy as np
+
+            labels = np.unique(np.asanyarray(out.dataobj))
+            n = int((labels > 0).sum())
+            test_state.update(state="done", seconds=round(time.monotonic() - start, 1),
+                              detail=f"{n} labels in the result, on the grid of the CT.",
+                              **{k: v for k, v in getattr(seg, "last_stats", {}).items() if v})
+        except Exception as exc:  # noqa: BLE001  the page shows what went wrong
+            test_state.update(state="error", seconds=round(time.monotonic() - start, 1),
+                              detail=str(exc)[:500])
+
+    @app.post("/api/admin/segmentation/test", status_code=202)
+    def admin_test_start(_sid: str = Depends(session)):
+        need_admin()
+        seg = current_segmenter()
+        if seg is None:
+            raise HTTPException(409, "segmentation is not set up; save a provider first")
+        with test_lock:
+            if test_state.get("state") == "running":
+                raise HTTPException(409, "a test is already running")
+            test_state.clear()
+            test_state.update(state="running", started=time.time(),
+                              provider=admin.load().segmentation_provider)
+        threading.Thread(target=run_test, args=(seg,), daemon=True).start()
+        return test_state
+
+    @app.get("/api/admin/segmentation/test")
+    def admin_test_status(_sid: str = Depends(session)):
+        need_admin()
+        return test_state
 
     @app.get("/api/ingest/manual.csv")
     def ingest_manual(_sid: str = Depends(session)):

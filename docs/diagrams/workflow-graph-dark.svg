@@ -118,12 +118,12 @@
 
       <rect x="40" y="500" width="210" height="64" rx="6" fill="none" stroke="#98A4AB" stroke-width="1.5" stroke-dasharray="5 4"/>
       <text class="node" x="145" y="524" text-anchor="middle">Hosted version</text>
-      <text class="sub" x="145" y="542" text-anchor="middle">upload a de-identified CT</text>
-      <text class="subm" x="145" y="556" text-anchor="middle">server keeps nothing</text>
+      <text class="sub" x="145" y="542" text-anchor="middle">on hold, not deployed</text>
+      <text class="subm" x="145" y="556" text-anchor="middle">would keep nothing</text>
 
       <rect x="276" y="500" width="210" height="64" rx="6" fill="none" stroke="#98A4AB" stroke-width="1.5" stroke-dasharray="5 4"/>
       <text class="node" x="381" y="524" text-anchor="middle">GPU service</text>
-      <text class="sub" x="381" y="542" text-anchor="middle">TotalSegmentator, on demand</text>
+      <text class="sub" x="381" y="542" text-anchor="middle">Modal or home PC, set on Admin</text>
       <text class="subm" x="381" y="556" text-anchor="middle">organ map back, nothing kept</text>
 
       <rect x="512" y="500" width="210" height="64" rx="6" fill="#1C2429" stroke="#37424A"/>

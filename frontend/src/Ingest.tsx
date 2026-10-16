@@ -230,19 +230,20 @@ const STATUS_LABEL: Record<WorkbookRow["status"], string> = {
   conflict: "conflict",
 };
 
-function WorkbookImport({ onFill, ingested }: {
+function WorkbookImport({ onFill, ingested, linked }: {
   onFill: (row: WorkbookRow) => void;
   ingested: string[];
+  linked: boolean;
 }) {
   const [book, setBook] = useState<WorkbookResult | null>(null);
   const [state, setState] = useState("");
 
-  async function load(file: File | undefined) {
+  async function load(file: File | "linked" | undefined) {
     if (!file) return;
     setBook(null);
     setState("Reading the workbook");
     try {
-      const result = await api.importWorkbook(file);
+      const result = file === "linked" ? await api.linkedWorkbook() : await api.importWorkbook(file);
       setBook(result);
       setState(`${result.rows.length} case row${result.rows.length === 1 ? "" : "s"}`);
     } catch (err) {
@@ -261,8 +262,16 @@ function WorkbookImport({ onFill, ingested }: {
         is kept on this computer except what you ingest. Pick a row to fill the form below, then
         choose the CT folder.
       </p>
+      {linked && (
+        <div className="row">
+          <button onClick={() => load("linked")} data-testid="load-linked">
+            {book ? "Reload linked workbook" : "Load linked workbook"}
+          </button>
+          <span className="muted small">the OneDrive copy set on the Admin tab</span>
+        </div>
+      )}
       <label className="file">
-        Workbook (.xlsx)
+        {linked ? "Or choose a workbook file (.xlsx)" : "Workbook (.xlsx)"}
         <input type="file" accept=".xlsx" data-testid="workbook-input"
           onChange={(e) => { load(e.target.files?.[0]); e.target.value = ""; }} />
       </label>
@@ -302,6 +311,7 @@ function WorkbookImport({ onFill, ingested }: {
 export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void }) {
   const [form, setForm] = useState<Form>(EMPTY);
   const [locations, setLocations] = useState<string[]>([]);
+  const [linked, setLinked] = useState(false);
   const [cases, setCases] = useState<LibraryCase[]>([]);
   const [preop, setPreop] = useState<{ staging: string; series_uid: string } | null>(null);
   const [postop, setPostop] = useState<{ staging: string; series_uid: string } | null>(null);
@@ -321,6 +331,7 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
       if (!s.enabled) return;
       setCases(s.cases);
       setLocations(s.stone_locations);
+      setLinked(s.workbook_linked);
       setForm((f) => ({ ...f, case_id: s.next_case_id }));
     }).catch((err) => setError(err.message));
   }, []);
@@ -424,7 +435,8 @@ export default function Ingest({ onOpen }: { onOpen: (c: CaseSummary) => void })
       )}
       {error && <p className="error">{error}</p>}
 
-      <WorkbookImport onFill={fillFromWorkbook} ingested={cases.map((c) => c.case_id)} />
+      <WorkbookImport onFill={fillFromWorkbook} ingested={cases.map((c) => c.case_id)}
+        linked={linked} />
       {filled && (
         <p className="card small" data-testid="filled-from">
           Form filled from workbook row {filled.row} ({filled.case_id}). Choose the CT folder
