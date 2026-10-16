@@ -28,7 +28,7 @@ The segmentation is AI. The tract ranking is geometry. We think the geometry is 
 Rose marks identifiable data: the DICOM export, the chart, the case workbook and the MRN key. It stays in the workbook on the university server and on the approved computer that runs the ingest page. Amber marks the places where you decide: before a case is saved, the planner parameters, and the review of the tracts. Teal marks what the study tests: the ranked tracts and the validation report. Dashed shapes keep nothing: the GPU service gets a de-identified CT, returns the organ map and keeps neither. A standalone version of the diagram is in [docs/diagrams/workflow-graph.html](docs/diagrams/workflow-graph.html).
 
 1. **Ingest.** You choose the exported CT study folder. The page lists every series, picks the axial CT and shows its slice thickness. It removes identifiers from the image headers and warns if text may be burned into the pixels. The clinical data comes from a shared Excel workbook that colleagues fill in from the operative report and chart; picking a row fills the case form. The workbook's Key sheet assigns the study ID (case_001, case_002, ...). On this computer the MRN goes only into a key file kept in a separate folder, never into the case folder.
-2. **Segmentation.** The de-identified CT goes to a GPU service, which outlines the kidneys and surrounding organs and keeps nothing. Stones are found as dense voxels inside the kidney, with their volume and density.
+2. **Segmentation.** The de-identified CT goes to the GPU chosen on the Admin tab (Modal in the cloud, or the team's own PC), which outlines the kidneys and surrounding organs and keeps nothing. Stones are found as dense voxels inside the kidney, with their volume and density.
 3. **Planning.** For every pair of skin entry point and target, the planner checks whether the tract hits colon, spleen, liver, lung or rib (any hit rules it out) and how much of the stone a rigid scope reaches from it. Closeness to colon and pleura, a supracostal entry, and other penalties lower the score. The parameters behind these are placeholders until surgeons set them.
 4. **Review.** You see the CT with organs, stones and the top three tracts, and a ranked table. If the segmentation is wrong, fix it in 3D Slicer; the corrections are logged. Saving writes the results into the case folder so nothing is recomputed.
 5. **Validation.** A report compares the top tract with the calyx actually used, the automatic stone volume with a manual one, and predicted reach with residual fragments after surgery.
@@ -76,44 +76,25 @@ Nice to have, not required for Phase 1: a manual stone volume measured by someon
 
 ## How to use it
 
-The tool runs on your own computer in a free program called Docker, which packages the software so there is nothing else to install. These steps are for a Mac. Use a computer your institution approves for patient data, with disk encryption (FileVault) turned on: the DICOM export and the MRN key are identifiable. 3D Slicer is optional, for correcting a segmentation by hand ([docs/running.md](docs/running.md)).
-
-### Once, to set it up
-
-1. Install Docker Desktop from docker.com and open it. Wait until it says Docker is running. It has to be open whenever you use the tool.
-2. Open Terminal (Applications, Utilities) and paste these lines, one at a time. The first may ask to install the Mac developer tools; say yes and run it again when that finishes.
-
-   ```
-   git clone https://github.com/urologai/stone-planner.git
-   cd stone-planner
-   docker build -t stone-planner .
-   mkdir -p ~/stone-data ~/stone-key ~/stone-report
-   ```
-
-   The build takes a few minutes. `stone-data` will hold the de-identified cases. `stone-key` will hold the file that links study IDs to MRNs. `stone-report` will hold the validation report. Keep both out of iCloud Drive, Dropbox, OneDrive and any shared drive.
+The tool runs on the team's Mac mini, which is approved to hold patient data. You use it by connecting to that Mac with Screen Sharing and opening the tool in a browser there; the tool itself is reachable only from the Mac. Setting up the Mac is done once, by whoever looks after it: [docs/mac-mini.md](docs/mac-mini.md). 3D Slicer is optional, for correcting a segmentation by hand ([docs/running.md](docs/running.md)).
 
 ### Each time you use it
 
-1. In Terminal, start the tool. Pick your own password in place of `choose-a-password`:
+1. Connect to the Mac mini with Screen Sharing.
+2. On the Mac, open http://localhost:8000 in a browser and log in with the tool's password.
 
-   ```
-   cd ~/stone-planner
-   docker run -p 127.0.0.1:8000:8000 --user "$(id -u):$(id -g)" \
-     -v ~/stone-data:/data -v ~/stone-key:/key \
-     -e DATA_DIR=/data -e KEY_FILE=/key/mrn_key.csv \
-     -e APP_PASSWORD=choose-a-password -e COOKIE_SECURE=false stone-planner
-   ```
+The tool starts by itself when the Mac starts. The tabs are Ingest (enter cases), Planner (look at a case and plan tracts) and Admin (setup).
 
-2. When the Terminal shows `Uvicorn running`, open http://localhost:8000 in your browser and log in with that password. The page is reachable only from this computer.
-3. To stop, click the Terminal window and press Control-C.
+### Set it up (Admin tab)
 
-To get an update: `cd ~/stone-planner`, then `git pull`, then `docker build -t stone-planner .` again.
+1. Segmentation: choose where it runs. Cloud GPU (Modal) and Home PC GPU send only the de-identified CT and keep nothing; This computer runs on the Mac's own processor, slowly; Off means organ maps are made elsewhere and uploaded. Enter the token for your choice, Save, then Check connection. Test segmentation runs one CT and reports how long it took.
+2. Case workbook: paste the path of the workbook in the OneDrive folder on the Mac, Save, then Check workbook.
 
 ### Collect the data (shared workbook)
 
 The clinical data for each case goes in one Excel workbook that the team keeps on the approved university server. It holds MRNs, so keep it there: do not email it or copy it to a laptop or personal cloud drive.
 
-1. On the Ingest tab, press Download blank workbook and save it to the university server. The Instructions sheet explains every column and where to find it.
+1. On the Ingest tab, press Download blank workbook and save it to the project's OneDrive folder. The Instructions sheet explains every column and where to find it.
 2. Key sheet: type each patient's MRN next to the next free study ID. Never change a study ID once it has an MRN. A duplicate MRN turns red.
 3. Lookup sheet: type an MRN to find its study ID, or a study ID to find its MRN.
 4. Cases sheet: one row per case. Choose the study ID, then fill the yellow cells from the dropdowns. Row 2 is an example. The last column, Still needed, lists what is missing until it says complete.
@@ -122,7 +103,7 @@ The Cases sheet has no MRN on it, so a copy of that sheet alone is de-identified
 
 ### Enter a case (Ingest tab)
 
-From the workbook: under Import from the case workbook, choose the workbook file. Each case row is listed as ready, incomplete (with what is missing), already ingested, or conflict (the study ID is linked to a different MRN on this computer; check which patient it is before going further). Press Fill form on a row. The form fills in, including the study ID and MRN, and you only need steps 1, 3, 6 (the folders), 9 and 10 below. The workbook itself is not kept on this computer.
+From the workbook: under Import from the case workbook, press Load linked workbook (it reads the OneDrive copy set on the Admin tab), or choose a workbook file. Each case row is listed as ready, incomplete (with what is missing), already ingested, or conflict (the study ID is linked to a different MRN on this computer; check which patient it is before going further). Press Fill form on a row. The form fills in, including the study ID and MRN, and you only need steps 1, 3, 6 (the folders), 9 and 10 below. The workbook itself is not kept on this computer.
 
 Without the workbook, fill the form by hand:
 
@@ -143,26 +124,25 @@ The case now appears under Cases on this computer.
 ### Plan a case (Planner tab)
 
 1. In the case list, press Open in planner.
-2. Press Segment on GPU. This needs the GPU service connected; see [docs/deploy.md](docs/deploy.md). It takes a few minutes.
+2. Press Segment. It runs wherever the Admin tab says, and takes a few minutes.
 3. Leave the side on auto unless you want a specific side. Leave the planner parameters at their defaults unless you are testing them ([docs/parameters.md](docs/parameters.md)). Press Plan tracts.
 4. The top tracts appear on the CT in green, yellow and orange, with a ranked table below. Click a row to centre the images on that target.
 5. Press Save to case folder. Opening the case again later shows the saved result without recomputing.
 
 ### Get the validation report
 
-When cases are planned, run this in Terminal from `~/stone-planner`:
+When cases are planned, open Terminal on the Mac mini and run:
 
 ```
-docker run --rm --user "$(id -u):$(id -g)" -v ~/stone-data:/data -v ~/stone-report:/report \
-  -v "$PWD/scripts":/scripts:ro --entrypoint python stone-planner \
-  /scripts/validate.py /data /data/manual.csv /report
+cd ~/stone-planner
+.venv/bin/python scripts/validate.py ~/stone-data ~/stone-data/manual.csv ~/stone-report
 ```
 
 The summary prints in Terminal. `validation.csv` in `~/stone-report` has one row per case.
 
 ### The hosted version
 
-There is also a version on a web server for looking at cases away from this computer. It accepts only a CT that has already been de-identified, segments and plans it the same way, and keeps nothing: Save case downloads a file you open again later. It has no ingest page and never sees DICOM or MRNs.
+A version for a web server exists in the code but is on hold: nothing is deployed, so no patient data goes to a hosting service. If it is revived, it accepts only a CT that has already been de-identified, keeps nothing, and has no ingest page.
 
 ## Data policy
 

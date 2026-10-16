@@ -1,0 +1,14 @@
+# Runtime dependencies of the GPU worker image (gpu_worker/Dockerfile). The
+# default PyPI build of torch for Linux carries CUDA (13.x as of this lock),
+# which covers RTX 40 and 50 series cards; it needs NVIDIA driver 580 or newer.
+# Regenerate the hash-pinned lock with:
+#   uv pip compile gpu_worker/requirements.in --generate-hashes --python-version 3.13 \
+#       --python-platform x86_64-manylinux_2_28 -o gpu_worker/requirements.txt
+TotalSegmentator==2.18.0
+torch>=2.8
+nibabel>=5.0
+numpy
+scipy
+scikit-image
+fastapi>=0.115
+uvicorn>=0.30

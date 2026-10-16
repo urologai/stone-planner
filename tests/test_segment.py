@@ -6,6 +6,7 @@ calcifications. TotalSegmentator is replaced by a stub module so the wiring
 (roi_subset, device names, body merge, fallback) is tested without torch.
 """
 
+import json
 import sys
 import types
 
@@ -223,7 +224,7 @@ def test_merge_body_and_geometry_reads_it():
 
 
 @pytest.fixture
-def fake_ts(monkeypatch):
+def fake_ts(monkeypatch, tmp_path):
     calls = []
     ct, organs = make_phantom()
     x, y, _ = _mm_grid(AFFINE)
@@ -244,8 +245,26 @@ def fake_ts(monkeypatch):
     api = types.ModuleType("totalsegmentator.python_api")
     api.totalsegmentator = totalsegmentator
     pkg.python_api = api
+
+    # Same shape as totalsegmentator.config: a config.json that starts with
+    # usage stats on.
+    config_dir = tmp_path / "totalseg_home"
+    cfg = types.ModuleType("totalsegmentator.config")
+
+    def setup_totalseg():
+        config_dir.mkdir(exist_ok=True)
+        path = config_dir / "config.json"
+        if not path.exists():
+            path.write_text(json.dumps({"totalseg_id": "x", "send_usage_stats": True}))
+        return json.loads(path.read_text())
+
+    cfg.setup_totalseg = setup_totalseg
+    cfg.get_totalseg_dir = lambda: config_dir
+    pkg.config = cfg
+    state["config"] = config_dir / "config.json"
     monkeypatch.setitem(sys.modules, "totalsegmentator", pkg)
     monkeypatch.setitem(sys.modules, "totalsegmentator.python_api", api)
+    monkeypatch.setitem(sys.modules, "totalsegmentator.config", cfg)
     return calls, ct, organs, body_trunc.astype(bool), state
 
 
@@ -265,6 +284,12 @@ def test_run_totalsegmentator_wiring(tmp_path, fake_ts):
     merged = np.asarray(nib.load(str(out)).dataobj)
     assert np.array_equal(merged[organs > 0], organs[organs > 0])
     assert np.all(merged[body & (organs == 0)] == segment.BODY_LABEL)
+
+
+def test_run_totalsegmentator_turns_off_usage_stats(tmp_path, fake_ts):
+    *_, state = fake_ts
+    segment.run_totalsegmentator(_write_ct(tmp_path, fake_ts[1]), tmp_path / "out")
+    assert json.loads(state["config"].read_text())["send_usage_stats"] is False
 
 
 def test_run_totalsegmentator_body_fallback(tmp_path, fake_ts, capsys):

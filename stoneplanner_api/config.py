@@ -43,6 +43,9 @@ class Settings:
     data_dir: Path | None = None
     key_file: Path | None = None
     max_ingest_mb: int = 4000
+    # Admin page settings (GPU provider, tokens, workbook path). Defaults to
+    # stoneplanner-settings.json next to KEY_FILE; must be outside DATA_DIR.
+    settings_file: Path | None = None
 
     @property
     def modal_configured(self) -> bool:
@@ -66,4 +69,6 @@ class Settings:
             data_dir=Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else None,
             key_file=Path(os.environ["KEY_FILE"]) if os.environ.get("KEY_FILE") else None,
             max_ingest_mb=_int("MAX_INGEST_MB", 4000),
+            settings_file=Path(os.environ["SETTINGS_FILE"])
+            if os.environ.get("SETTINGS_FILE") else None,
         )

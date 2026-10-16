@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, bundleUrl, fileUrl, type CaseSummary, type ParamField } from "./api";
+import Admin from "./Admin";
 import Ingest from "./Ingest";
 import { defaultsOf, overrides, type ParamValues } from "./params";
 import ParamsForm from "./ParamsForm";
@@ -71,7 +72,11 @@ function Upload({ onCase }: { onCase: (c: CaseSummary) => void }) {
   );
 }
 
-export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: () => void }) {
+export default function Workspace({ gpu, onLogout, onSettingsChanged }: {
+  gpu: boolean;
+  onLogout: () => void;
+  onSettingsChanged: () => void;
+}) {
   const [current, setCurrent] = useState<CaseSummary | null>(null);
   const [fields, setFields] = useState<ParamField[]>([]);
   const [values, setValues] = useState<ParamValues>({});
@@ -81,7 +86,7 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
   const [error, setError] = useState("");
   // The ingest page exists only on a local run with DATA_DIR and KEY_FILE set.
   const [ingest, setIngest] = useState(false);
-  const [tab, setTab] = useState<"ingest" | "planner">("planner");
+  const [tab, setTab] = useState<"ingest" | "planner" | "admin">("planner");
   const [saved, setSaved] = useState("");
   const defaults = defaultsOf(fields);
 
@@ -186,6 +191,8 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
               onClick={() => setTab("ingest")}>Ingest</button>
             <button className={tab === "planner" ? "" : "secondary"} data-testid="tab-planner"
               onClick={() => setTab("planner")}>Planner</button>
+            <button className={tab === "admin" ? "" : "secondary"} data-testid="tab-admin"
+              onClick={() => setTab("admin")}>Admin</button>
           </nav>
         )}
         <span className="spacer" />
@@ -194,7 +201,9 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
         <button className="secondary" onClick={onLogout}>Log out</button>
       </header>
       {error && <p className="error banner">{error}</p>}
-      {tab === "ingest" ? (
+      {tab === "admin" ? (
+        <Admin onChanged={onSettingsChanged} />
+      ) : tab === "ingest" ? (
         <Ingest onOpen={openFromLibrary} />
       ) : !current ? (
         <Upload onCase={(c) => { setCurrent(c); setVersion((v) => v + 1); }} />
@@ -216,8 +225,9 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
               {!current.has.organs && (
                 <button disabled={!gpu || running}
                   onClick={() => act(() => api.segment(current.id))}
-                  title={gpu ? "" : "GPU segmentation is not configured on this server"}>
-                  Segment on GPU
+                  title={gpu ? "" : ingest ? "Choose where segmentation runs on the Admin tab"
+                    : "GPU segmentation is not configured on this server"}>
+                  Segment
                 </button>
               )}
               {job("segment") && (

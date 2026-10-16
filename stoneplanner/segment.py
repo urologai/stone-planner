@@ -204,10 +204,29 @@ def merge_body(organs: np.ndarray, body: np.ndarray) -> np.ndarray:
 # TotalSegmentator
 
 
+def _disable_usage_stats() -> None:
+    """Turn off TotalSegmentator's run telemetry (stats.totalsegmentator.com).
+
+    It sends run settings and a random install ID, not images, but nothing in
+    this project should call out while handling study data.
+    """
+    import json
+
+    from totalsegmentator.config import setup_totalseg
+
+    config = setup_totalseg()
+    if config.get("send_usage_stats", True):
+        from totalsegmentator.config import get_totalseg_dir
+
+        config["send_usage_stats"] = False
+        (get_totalseg_dir() / "config.json").write_text(json.dumps(config, indent=4))
+
+
 def run_totalsegmentator(nifti_path: Path, out_dir: Path, device: str = "cpu") -> Path:
     """Run TotalSegmentator with ORGAN_ROI_SUBSET. Return path to organ label map.
 
-    The returned map also carries the body mask as BODY_LABEL.
+    The returned map also carries the body mask as BODY_LABEL. TotalSegmentator's
+    usage telemetry is switched off first.
     """
     import nibabel as nib
 
@@ -215,6 +234,7 @@ def run_totalsegmentator(nifti_path: Path, out_dir: Path, device: str = "cpu") -
         from totalsegmentator.python_api import totalsegmentator
     except ImportError as exc:
         raise RuntimeError("TotalSegmentator is not installed in this environment") from exc
+    _disable_usage_stats()
 
     nifti_path = Path(nifti_path)
     out_dir = Path(out_dir)

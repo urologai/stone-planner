@@ -84,7 +84,47 @@ export type LibraryCase = {
 
 export type IngestStatus =
   | { enabled: false }
-  | { enabled: true; next_case_id: string; cases: LibraryCase[]; stone_locations: string[] };
+  | {
+      enabled: true;
+      next_case_id: string;
+      cases: LibraryCase[];
+      stone_locations: string[];
+      workbook_linked: boolean;
+    };
+
+export type Provider = "modal" | "remote" | "local" | "none";
+
+/** Admin settings as the server shows them: secrets appear only as has_*. */
+export type AdminSettings = {
+  segmentation_provider: Provider;
+  modal_app_name: string;
+  modal_function_name: string;
+  remote_url: string;
+  local_device: "cpu" | "mps";
+  workbook_path: string;
+  has_modal_token_id: boolean;
+  has_modal_token_secret: boolean;
+  has_remote_token: boolean;
+};
+
+export type AdminView = {
+  settings: AdminSettings;
+  paths: { data_dir: string; key_file: string; settings_file: string };
+  segmentation_configured: boolean;
+  segmenter_overridden: boolean;
+};
+
+export type CheckResult = { ok: boolean; detail: string };
+
+export type SegTest = {
+  state: "idle" | "running" | "done" | "error";
+  provider?: string;
+  source?: string;
+  seconds?: number;
+  detail?: string;
+  worker_seconds?: string;
+  peak_gpu_gb?: string;
+};
 
 export type IngestResult = {
   case_id: string;
@@ -188,6 +228,15 @@ export const api = {
   ingestCase: (body: unknown) => request<IngestResult>("/api/ingest/cases", json(body)),
   openLibraryCase: (caseId: string) =>
     request<CaseSummary>(`/api/ingest/cases/${caseId}/open`, { method: "POST" }),
+  admin: () => request<AdminView>("/api/admin"),
+  saveAdmin: (patch: Record<string, unknown>) =>
+    request<AdminView>("/api/admin", { ...json(patch), method: "PUT" }),
+  checkSegmentation: () =>
+    request<CheckResult>("/api/admin/segmentation/check", { method: "POST" }),
+  startSegTest: () => request<SegTest>("/api/admin/segmentation/test", { method: "POST" }),
+  segTest: () => request<SegTest>("/api/admin/segmentation/test"),
+  linkedWorkbook: () =>
+    request<WorkbookResult & { path: string }>("/api/ingest/workbook/linked"),
   importWorkbook: (file: File) => {
     const form = new FormData();
     form.append("file", file, "workbook.xlsx");
