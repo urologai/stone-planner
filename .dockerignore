@@ -1,0 +1,46 @@
+# Keep the build context small and free of data, secrets and host artifacts.
+.git
+.gitignore
+.claude
+.github
+
+# Imaging never goes in the image either
+*.dcm
+*.DCM
+*.nii
+*.nii.gz
+*.nrrd
+*.mha
+*.mhd
+*.raw
+*.zip
+data/
+cases/
+scans/
+uploads/
+outputs/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Vite (rebuilt inside the image)
+frontend/node_modules/
+frontend/dist/
+
+# Not needed at runtime
+tests/
+docs/
+scripts/
+StonePlanner/
+modal_app/
+*.md
+
+# Secrets and local env
+**/.env
+**/.env.*

@@ -39,14 +39,14 @@ Python throughout.
 | DICOM handling | pydicom, dcm2niix | Standard, scriptable |
 | De-identification | pydicom header scrub, burned-in text check | Abdominal CT needs no defacing |
 | Volume ops | SimpleITK, numpy, scipy | Ray casting and masks |
-| Meshes | scikit-image marching cubes, trimesh | Skin surface and organ meshes |
+| Meshes | scikit-image marching cubes | Skin surface |
 | Segmentation | TotalSegmentator | Organs; restrict to a subset for speed |
 | Stones | HU threshold in kidney mask, half-max per stone | No training needed |
 | Prototype UI | 3D Slicer Python module | Viewer, segment editor and markups already exist |
 | Web backend | FastAPI | Serves NIfTI and masks, runs scoring |
-| Web viewer | NiiVue | Lightweight WebGL, NIfTI-native, works on phone |
-| GPU inference | Modal or RunPod | Cents per scan, no local GPU dependency |
-| Hosting | Netlify (static front end) | Already in use |
+| Web viewer | NiiVue in React | Lightweight WebGL, NIfTI-native, works on phone |
+| GPU inference | Modal | Pay per use, scales to zero, no local GPU dependency |
+| Hosting | Render, one Docker service | Same pattern as the other projects (render.yaml Blueprint) |
 
 TotalSegmentator runs on CPU in minutes, acceptable for research. Apple Silicon MPS support is unverified; do not assume the laptop is the inference box.
 
@@ -105,7 +105,7 @@ Tasks:
 - [ ] Manual correction loop in Slicer segment editor; log correction frequency (goes in the paper)
 - [ ] Grow to 50 to 80 cases
 - [ ] Concordance with actual access; correlation of predicted reachable fraction with postop residual fragment status
-- [ ] Web wrapper, only after scoring is stable: FastAPI, NiiVue, GPU inference on Modal or RunPod, Netlify front end
+- [ ] Web wrapper: FastAPI and NiiVue in one Docker service on Render (not Netlify), GPU segmentation on Modal. Built ahead of stable scoring at the user's request; uploads are de-identified NIfTI only and the server keeps nothing (docs/deploy.md)
 
 Exit criterion: concordance and residual-fragment correlation good enough to write up; web demo loads a case and shows ranked tracts in under 2 minutes.
 

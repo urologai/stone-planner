@@ -1,0 +1,43 @@
+# Render Blueprint for the stone planner web app.
+#
+# One Docker web service (FastAPI API + built React front end). No database
+# and no persistent disk, on purpose: cases live in a scratch folder while
+# they are used and are deleted after CASE_TTL_MINUTES idle and at every
+# deploy. Users keep their work with "Save case" (a zip on their own disk).
+# Only de-identified NIfTI is accepted; DICOM is refused.
+#
+# Segmentation runs on Modal (modal_app/segment_gpu.py). Deploy that first,
+# then set the Modal token here. Without it, users can still upload organ
+# and stone maps segmented locally.
+#
+# First-time setup: Render dashboard, New, Blueprint, point at this repo.
+# Then set APP_PASSWORD (and the Modal token) in the service's Environment.
+
+services:
+  - type: web
+    name: stone-planner
+    runtime: docker
+    # 2 GB. A full abdominal CT plus its label maps and the planner's working
+    # arrays fit, but this is unmeasured on real scans: move to 'pro' (4 GB)
+    # if planning restarts the instance.
+    plan: standard
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true       # signs session cookies; generated once by Render
+      - key: APP_PASSWORD
+        sync: false               # shared access password; set in the dashboard
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
+      - key: MODAL_APP_NAME
+        value: stone-planner-segment
+      - key: CASE_TTL_MINUTES
+        value: "120"
+      - key: MAX_UPLOAD_MB
+        value: "400"

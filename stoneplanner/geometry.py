@@ -1,11 +1,14 @@
-"""Candidate tract generation and scoring. The Phase 1 contribution.
+"""Candidate tract generation and scoring. The Phase 1 contribution, extended in Phase 2.
 
 Input:  CT NIfTI, organ label map, stone label map, metadata JSON.
 Output: <case_id>_tracts.csv, one row per candidate tract, ranked:
-            rank, entry_xyz_mm, target_xyz_mm, reachable_fraction,
-            tract_length_mm, parenchymal_depth_mm, nearest_organ, nearest_organ_mm,
-            supracostal (bool), collision (bool), collision_organ
-        <case_id>_tracts.json with the same plus the parameters used.
+            rank, entry_xyz_mm, target_xyz_mm, target_group, target_source,
+            score, reachable_fraction, flexible_reachable_fraction,
+            tract_length_mm, parenchymal_depth_mm, parenchymal_thickness_mm,
+            infundibular_angle_deg, nearest_organ, nearest_organ_mm, colon_mm,
+            pleura_mm, supracostal (bool), collision (bool), collision_organ
+        <case_id>_tracts.json with the same plus the parameters used and
+            best_by_group: the best collision-free tract per target group.
 
 Coordinate convention: everything in physical mm, RAS, matching the NIfTI
 affine. Never work in voxel indices outside of mask lookups.
@@ -46,6 +49,32 @@ Algorithm (Phase 1, rigid scope, stone-centroid target):
      nearest_organ_mm (larger is better) then tract_length_mm (shorter is
      better). Return the top N (default 10, display top 3).
 
+Phase 2 changes to the algorithm above:
+
+  2. Targets come from build_targets per target_mode: stone centroids (as
+     above), posterior calyx proxies from calyx.py (one each for the upper,
+     mid and lower pole), or both (default). Each target carries its
+     calyceal group and source. A manual pick passed to plan() replaces them.
+
+  3. The ray also records distance to colon and to lung (the pleura proxy)
+     whether or not they are collision organs, and the parenchymal thickness:
+     the length of the tract inside the kidney mask.
+
+  5. A second cone, half-angle flex_sweep_deg (default 90) and depth
+     flex_depth_mm, gives flexible_reachable_fraction. It is reported, not
+     ranked on.
+
+  6. score = reachable_fraction minus weighted soft penalties, each in [0, 1]:
+       colon, pleura   1 - distance / margin, 0 beyond the margin
+       supracostal     1 if supracostal
+       parenchyma      relative distance outside parenchyma_band_mm
+       infundibular    angle between tract and calyx axis / 90 deg (calyx
+                       targets only)
+     Collisions stay a hard fail. Collision-free tracts rank by score, then
+     nearest_organ_mm, then tract_length_mm. With every weight at 0 the
+     ranking is the Phase 1 ranking. Weights, margins and the band are
+     placeholders until surgeons set them.
+
 Parameters live in a dataclass so the Slicer module and the validation
 script can override them and so they appear in the output JSON.
 
@@ -81,11 +110,13 @@ Implementation notes (how the steps above are made concrete):
   - A tract that never enters the kidney mask gets parenchymal_depth_mm NaN
     and the cone apex at the target.
   - plan() returns collision-free tracts first, then colliding ones, each
-    group in the rank order of step 6, truncated to top_n.
+    group in the rank order of step 6, truncated to top_n unless
+    return_all=True.
 
 CLI:
     stoneplanner-plan <case.nii.gz> <organs.nii.gz> <stones.nii.gz> <out_dir>
         [--sweep-deg 25] [--scope-depth-mm 120] [--side left|right|auto]
+        [--targets stone|calyx|both] [--params-json overrides.json]
 """
 
 from __future__ import annotations
@@ -101,7 +132,11 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from stoneplanner import segment
+from stoneplanner import calyx, segment
+
+# Organs measured for the soft penalties even when they are not collision organs.
+# "lung" stands in for the pleura.
+PENALTY_ORGANS = ("colon", "lung")
 
 
 @dataclass
@@ -119,6 +154,22 @@ class PlanParams:
     body_hu_threshold: float = -500.0
     midaxillary_band_mm: float = 5.0
     rib_edge_bin_mm: float = 2.0
+    # Phase 2. Clinical values below are placeholders until surgeons set them.
+    target_mode: str = "both"                 # stone | calyx | both
+    posterior_calyx_deg: float = 30.0         # calyx axis, lateral rotated toward posterior
+    calyx_depth_mm: float = 15.0              # target depth below the capsule
+    calyx_levels: dict[str, float] = field(default_factory=lambda: dict(calyx.DEFAULT_LEVELS))
+    sinus_closing_mm: float = 15.0            # ball radius that fills the hilar notch
+    flex_sweep_deg: float = 90.0              # flexible-scope cone half-angle
+    flex_depth_mm: float = 120.0
+    w_colon: float = 0.5                      # weights on penalties in [0, 1]
+    colon_margin_mm: float = 20.0             # no penalty at or beyond this distance
+    w_pleura: float = 0.5
+    pleura_margin_mm: float = 20.0
+    w_supracostal: float = 0.1
+    w_parenchyma: float = 0.1
+    parenchyma_band_mm: list[float] = field(default_factory=lambda: [10.0, 30.0])
+    w_infundibular: float = 0.3               # penalty = angle / 90 deg
 
 
 @dataclass
@@ -133,6 +184,15 @@ class Tract:
     supracostal: bool
     collision: bool
     collision_organ: str | None
+    # Phase 2. Defaults keep Phase 1 style construction working.
+    flexible_reachable_fraction: float = float("nan")
+    colon_mm: float = float("inf")
+    pleura_mm: float = float("inf")
+    parenchymal_thickness_mm: float = float("nan")
+    infundibular_angle_deg: float = float("nan")
+    score: float = float("nan")
+    target_group: str = ""
+    target_source: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +377,9 @@ class _Scene:
 
     def __init__(self, organs: np.ndarray, affine: np.ndarray, params: PlanParams):
         self.inv_affine = np.linalg.inv(affine)
-        self.groups = list(params.collision_organs)
+        self.collision_groups = list(params.collision_organs)
+        self.groups = self.collision_groups + [
+            g for g in PENALTY_ORGANS if g not in self.collision_groups]
         max_label = max([int(organs.max()) if organs.size else 0]
                         + list(params.organ_labels.values()))
         self.group_of_label = np.full(max_label + 1, -1, dtype=np.int16)
@@ -343,8 +405,10 @@ def cast_ray(entry_mm: np.ndarray, target_mm: np.ndarray, organs: np.ndarray,
     """Walk the segment; return collision info, parenchymal entry, nearest organ.
 
     Keys: collision, collision_organ, parenchymal_entry_mm, parenchymal_depth_mm,
-    tract_length_mm, nearest_organ, nearest_organ_mm. Pass a prebuilt scene
-    when casting many rays through the same case.
+    tract_length_mm, nearest_organ, nearest_organ_mm (collision organs only),
+    parenchymal_thickness_mm (length of the tract inside the kidney mask), and
+    organ_mm (distance to every collision and penalty organ present). Pass a
+    prebuilt scene when casting many rays through the same case.
     """
     if scene is None:
         scene = _Scene(organs, affine, params)
@@ -357,7 +421,7 @@ def cast_ray(entry_mm: np.ndarray, target_mm: np.ndarray, organs: np.ndarray,
     labels = _lookup(organs, samples, scene.inv_affine).astype(np.int64)
     labels = np.clip(labels, 0, len(scene.group_of_label) - 1)
     groups = scene.group_of_label[labels]
-    hits = np.nonzero(groups >= 0)[0]
+    hits = np.nonzero((groups >= 0) & (groups < len(scene.collision_groups)))[0]
     collision = hits.size > 0
     collision_organ = scene.groups[groups[hits[0]]] if collision else None
 
@@ -368,15 +432,18 @@ def cast_ray(entry_mm: np.ndarray, target_mm: np.ndarray, organs: np.ndarray,
     else:
         parenchymal_entry = None
         depth = float("nan")
+    thickness = float(in_kidney.size * length / max(n - 1, 1))
 
+    organ_mm = {name: float(tree.query(samples)[0].min()) for name, tree in scene.trees.items()}
+    for g in np.unique(groups[groups >= 0]):
+        organ_mm[scene.groups[g]] = 0.0
     if collision:
         nearest_organ, nearest_mm = collision_organ, 0.0
     else:
         nearest_organ, nearest_mm = "", float("inf")
-        for name, tree in scene.trees.items():
-            d = float(tree.query(samples)[0].min())
-            if d < nearest_mm:
-                nearest_organ, nearest_mm = name, d
+        for name in scene.collision_groups:
+            if organ_mm.get(name, float("inf")) < nearest_mm:
+                nearest_organ, nearest_mm = name, organ_mm[name]
 
     return {
         "collision": bool(collision),
@@ -386,6 +453,8 @@ def cast_ray(entry_mm: np.ndarray, target_mm: np.ndarray, organs: np.ndarray,
         "tract_length_mm": length,
         "nearest_organ": nearest_organ,
         "nearest_organ_mm": nearest_mm,
+        "parenchymal_thickness_mm": thickness,
+        "organ_mm": organ_mm,
     }
 
 
@@ -421,28 +490,72 @@ def supracostal(entry_mm: np.ndarray, organs: np.ndarray, affine: np.ndarray,
 
 
 def _cone_fraction(apex_mm: np.ndarray, axis_mm: np.ndarray, stone_pts_mm: np.ndarray,
-                   params: PlanParams) -> float:
+                   params: PlanParams, flexible: bool = False) -> float:
     if len(stone_pts_mm) == 0:
         return 0.0
     norm = np.linalg.norm(axis_mm)
     if norm == 0:
         return 0.0
+    sweep = params.flex_sweep_deg if flexible else params.sweep_deg
+    depth = params.flex_depth_mm if flexible else params.scope_depth_mm
     v = stone_pts_mm - apex_mm
     along = v @ (axis_mm / norm)
     dist = np.linalg.norm(v, axis=1)
-    inside = (
-        (along >= 0.0)
-        & (along <= params.scope_depth_mm)
-        & (along >= dist * math.cos(math.radians(params.sweep_deg)) - 1e-9)
-    )
+    # Points within the half-angle of the axis and within depth along it. A
+    # half-angle over 90 degrees reaches behind the apex, so no along >= 0 test.
+    inside = (along <= depth) & (along >= dist * math.cos(math.radians(sweep)) - 1e-9)
     return float(inside.mean())
 
 
 def reachable_fraction(apex_mm: np.ndarray, axis_mm: np.ndarray, stones: np.ndarray,
-                       affine: np.ndarray, params: PlanParams) -> float:
-    """Fraction of all stone voxels inside the scope cone."""
+                       affine: np.ndarray, params: PlanParams, flexible: bool = False) -> float:
+    """Fraction of all stone voxels inside the scope cone (rigid, or flexible)."""
     return _cone_fraction(np.asarray(apex_mm, dtype=float), np.asarray(axis_mm, dtype=float),
-                          _mask_points_mm(stones > 0, affine), params)
+                          _mask_points_mm(stones > 0, affine), params, flexible)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: soft penalties and the weighted score
+
+
+def _proximity(distance_mm: float, margin_mm: float) -> float:
+    """1 at contact, falling linearly to 0 at the margin."""
+    if not math.isfinite(distance_mm) or margin_mm <= 0:
+        return 0.0
+    return max(0.0, 1.0 - distance_mm / margin_mm)
+
+
+def _outside_band(value: float, band: list[float]) -> float:
+    """0 inside [lo, hi]; the relative distance outside it, capped at 1."""
+    if not math.isfinite(value):
+        return 0.0
+    lo, hi = band
+    if value < lo:
+        return min(1.0, (lo - value) / lo) if lo > 0 else 0.0
+    if value > hi:
+        return min(1.0, (value - hi) / hi) if hi > 0 else 0.0
+    return 0.0
+
+
+def penalties(t: Tract, params: PlanParams) -> dict[str, float]:
+    """Each soft penalty in [0, 1], before weighting."""
+    angle = t.infundibular_angle_deg
+    return {
+        "colon": _proximity(t.colon_mm, params.colon_margin_mm),
+        "pleura": _proximity(t.pleura_mm, params.pleura_margin_mm),
+        "supracostal": 1.0 if t.supracostal else 0.0,
+        "parenchyma": _outside_band(t.parenchymal_thickness_mm, params.parenchyma_band_mm),
+        "infundibular": min(1.0, angle / 90.0) if math.isfinite(angle) else 0.0,
+    }
+
+
+def score(t: Tract, params: PlanParams) -> float:
+    """Rigid reachable fraction minus the weighted soft penalties."""
+    p = penalties(t, params)
+    weights = {"colon": params.w_colon, "pleura": params.w_pleura,
+               "supracostal": params.w_supracostal, "parenchyma": params.w_parenchyma,
+               "infundibular": params.w_infundibular}
+    return t.reachable_fraction - sum(weights[k] * p[k] for k in p)
 
 
 # ---------------------------------------------------------------------------
@@ -471,19 +584,58 @@ def _operative_side_stones(stones: np.ndarray, organs: np.ndarray, affine: np.nd
     return np.where(np.isin(stones, keep), stones, 0)
 
 
-def rank_tracts(tracts: list[Tract], top_n: int) -> list[Tract]:
-    """Collision-free first, then by reach, nearest organ distance, tract length."""
+def rank_tracts(tracts: list[Tract], top_n: int | None) -> list[Tract]:
+    """Collision-free first, then by score, nearest organ distance, tract length.
+
+    A tract without a score (NaN) ranks by its reachable fraction.
+    """
     def key(t: Tract):
-        return (t.collision, -t.reachable_fraction, -t.nearest_organ_mm, t.tract_length_mm)
-    return sorted(tracts, key=key)[:top_n]
+        value = t.score if math.isfinite(t.score) else t.reachable_fraction
+        return (t.collision, -value, -t.nearest_organ_mm, t.tract_length_mm)
+    ranked = sorted(tracts, key=key)
+    return ranked if top_n is None else ranked[:top_n]
+
+
+def build_targets(stones: np.ndarray, kidney: np.ndarray, affine: np.ndarray, side: str,
+                  params: PlanParams) -> list[calyx.Target]:
+    """Stone centroids and/or posterior calyx proxies, per params.target_mode."""
+    if params.target_mode not in ("stone", "calyx", "both"):
+        raise ValueError(f"target_mode must be stone, calyx or both, got {params.target_mode!r}")
+    targets: list[calyx.Target] = []
+    frame = (calyx.kidney_frame(kidney, affine, side, params.sinus_closing_mm)
+             if kidney.any() else None)
+    if params.target_mode in ("stone", "both"):
+        for p in target_points(stones, affine, params):
+            group = calyx.calyceal_group(p, kidney, affine, frame) if frame else "outside"
+            targets.append(calyx.Target(p, group, "stone"))
+    if params.target_mode in ("calyx", "both") and frame is not None:
+        targets += calyx.posterior_calyces(kidney, affine, side, params.posterior_calyx_deg,
+                                           params.calyx_depth_mm, params.calyx_levels,
+                                           frame=frame)
+    return targets
+
+
+def _as_targets(targets, kidney: np.ndarray, affine: np.ndarray) -> list[calyx.Target]:
+    """Accept Target objects or bare points (manual picks)."""
+    if targets is None:
+        return []
+    if len(targets) and isinstance(targets[0], calyx.Target):
+        return list(targets)
+    pts = np.atleast_2d(np.asarray(targets, dtype=float))
+    if pts.size == 0:
+        return []
+    return [calyx.Target(p, calyx.calyceal_group(p, kidney, affine) if kidney.any()
+                         else "outside", "manual") for p in pts]
 
 
 def plan(ct: np.ndarray, organs: np.ndarray, stones: np.ndarray, affine: np.ndarray,
          side: str = "auto", params: PlanParams | None = None,
-         targets_mm: np.ndarray | None = None) -> list[Tract]:
-    """Full pipeline: entry points -> targets -> ray cast -> reach -> rank.
+         targets=None, return_all: bool = False) -> list[Tract]:
+    """Full pipeline: entry points -> targets -> ray cast -> reach -> score -> rank.
 
-    targets_mm overrides the stone-centroid targets (Phase 2 calyx proxy hook).
+    targets overrides build_targets: a list of calyx.Target, or an (M, 3) array
+    of manual picks. return_all returns every candidate tract ranked, instead
+    of the top params.top_n; write_outputs needs that for the per-group best.
     """
     params = params or PlanParams()
     if not (ct.shape == organs.shape == stones.shape):
@@ -493,31 +645,32 @@ def plan(ct: np.ndarray, organs: np.ndarray, stones: np.ndarray, affine: np.ndar
     _side_sign(side)
 
     stones = _operative_side_stones(stones, organs, affine, side, params)
-    if targets_mm is None:
-        targets_mm = target_points(stones, affine, params)
-    targets_mm = np.atleast_2d(np.asarray(targets_mm, dtype=float))
-    if targets_mm.size == 0:
+    kidney = np.isin(organs, _group_ids(params, f"kidney_{side}"))
+    if targets is None:
+        target_list = build_targets(stones, kidney, affine, side, params)
+    else:
+        target_list = _as_targets(targets, kidney, affine)
+    if not target_list:
         return []
 
     body = _body_mask(ct, organs, affine, params)
     entries = skin_entry_points(body, organs, affine, side, params)
-    kidney_ids = _group_ids(params, f"kidney_{side}")
-    kidney = np.isin(organs, kidney_ids)
     scene = _Scene(organs, affine, params)
     rib_edge = _Rib12Edge(organs, affine, side, params)
     stone_pts = _mask_points_mm(stones > 0, affine)
 
     tracts: list[Tract] = []
-    for target in targets_mm:
+    for target in target_list:
+        point = np.asarray(target.point_mm, dtype=float)
         for entry in entries:
-            ray = cast_ray(entry, target, organs, kidney, affine, params, scene=scene)
+            ray = cast_ray(entry, point, organs, kidney, affine, params, scene=scene)
             apex = ray["parenchymal_entry_mm"]
             if apex is None:
-                apex = target
-            tracts.append(Tract(
+                apex = point
+            t = Tract(
                 entry_mm=entry.copy(),
-                target_mm=target.copy(),
-                reachable_fraction=_cone_fraction(apex, target - entry, stone_pts, params),
+                target_mm=point.copy(),
+                reachable_fraction=_cone_fraction(apex, point - entry, stone_pts, params),
                 tract_length_mm=ray["tract_length_mm"],
                 parenchymal_depth_mm=ray["parenchymal_depth_mm"],
                 nearest_organ=ray["nearest_organ"],
@@ -525,48 +678,92 @@ def plan(ct: np.ndarray, organs: np.ndarray, stones: np.ndarray, affine: np.ndar
                 supracostal=bool(entry[2] > rib_edge(entry[0])),
                 collision=ray["collision"],
                 collision_organ=ray["collision_organ"],
-            ))
-    return rank_tracts(tracts, params.top_n)
+                flexible_reachable_fraction=_cone_fraction(apex, point - entry, stone_pts,
+                                                           params, flexible=True),
+                colon_mm=ray["organ_mm"].get("colon", float("inf")),
+                pleura_mm=ray["organ_mm"].get("lung", float("inf")),
+                parenchymal_thickness_mm=ray["parenchymal_thickness_mm"],
+                infundibular_angle_deg=calyx.infundibular_angle_deg(entry, target),
+                target_group=target.group,
+                target_source=target.source,
+            )
+            t.score = score(t, params)
+            tracts.append(t)
+    return rank_tracts(tracts, None if return_all else params.top_n)
 
 
 # ---------------------------------------------------------------------------
 # Output
 
 
-def _finite_or_none(x: float) -> float | None:
-    return float(x) if math.isfinite(x) else None
+def _round(x: float, digits: int) -> float | None:
+    """Rounded, or None for NaN and infinity (JSON has neither)."""
+    return round(float(x), digits) if math.isfinite(x) else None
+
+
+def tract_record(t: Tract, rank: int | None = None) -> dict:
+    """One JSON-ready row. Non-finite numbers become None."""
+    return {
+        "rank": rank,
+        "entry_xyz_mm": [round(float(v), 2) for v in t.entry_mm],
+        "target_xyz_mm": [round(float(v), 2) for v in t.target_mm],
+        "target_group": t.target_group,
+        "target_source": t.target_source,
+        "score": _round(t.score, 4),
+        "reachable_fraction": round(t.reachable_fraction, 4),
+        "flexible_reachable_fraction": _round(t.flexible_reachable_fraction, 4),
+        "tract_length_mm": _round(t.tract_length_mm, 2),
+        "parenchymal_depth_mm": _round(t.parenchymal_depth_mm, 2),
+        "parenchymal_thickness_mm": _round(t.parenchymal_thickness_mm, 2),
+        "infundibular_angle_deg": _round(t.infundibular_angle_deg, 1),
+        "nearest_organ": t.nearest_organ,
+        "nearest_organ_mm": _round(t.nearest_organ_mm, 2),
+        "colon_mm": _round(t.colon_mm, 2),
+        "pleura_mm": _round(t.pleura_mm, 2),
+        "supracostal": t.supracostal,
+        "collision": t.collision,
+        "collision_organ": t.collision_organ,
+    }
 
 
 def tract_records(tracts: list[Tract]) -> list[dict]:
-    """JSON-ready rows in rank order. Non-finite numbers become None."""
-    rows = []
+    """JSON-ready rows in rank order."""
+    return [tract_record(t, rank) for rank, t in enumerate(tracts, start=1)]
+
+
+def best_by_group(tracts: list[Tract]) -> dict[str, dict]:
+    """Best collision-free tract for each target group, from a ranked list.
+
+    validate.py reads this to score the tract aimed at the calyx the surgeon
+    actually used, which need not be in the top N.
+    """
+    best: dict[str, dict] = {}
     for rank, t in enumerate(tracts, start=1):
-        rows.append({
-            "rank": rank,
-            "entry_xyz_mm": [round(float(v), 2) for v in t.entry_mm],
-            "target_xyz_mm": [round(float(v), 2) for v in t.target_mm],
-            "reachable_fraction": round(t.reachable_fraction, 4),
-            "tract_length_mm": _finite_or_none(round(t.tract_length_mm, 2)),
-            "parenchymal_depth_mm": _finite_or_none(round(t.parenchymal_depth_mm, 2)),
-            "nearest_organ": t.nearest_organ,
-            "nearest_organ_mm": _finite_or_none(round(t.nearest_organ_mm, 2)),
-            "supracostal": t.supracostal,
-            "collision": t.collision,
-            "collision_organ": t.collision_organ,
-        })
-    return rows
+        if not t.collision and t.target_group and t.target_group not in best:
+            best[t.target_group] = tract_record(t, rank)
+    return best
+
+
+CSV_COLUMNS = ["rank", "entry_xyz_mm", "target_xyz_mm", "target_group", "target_source",
+               "score", "reachable_fraction", "flexible_reachable_fraction",
+               "tract_length_mm", "parenchymal_depth_mm", "parenchymal_thickness_mm",
+               "infundibular_angle_deg", "nearest_organ", "nearest_organ_mm", "colon_mm",
+               "pleura_mm", "supracostal", "collision", "collision_organ"]
 
 
 def write_outputs(tracts: list[Tract], out_dir: Path, case_id: str, side: str,
                   params: PlanParams) -> tuple[Path, Path]:
-    """Write <case_id>_tracts.csv and <case_id>_tracts.json. Return both paths."""
+    """Write <case_id>_tracts.csv and <case_id>_tracts.json. Return both paths.
+
+    tracts is a ranked list, ideally every candidate (plan(return_all=True)):
+    the CSV and JSON "tracts" hold the top params.top_n, and the JSON
+    "best_by_group" is taken from the whole list.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows = tract_records(tracts)
+    rows = tract_records(tracts[: params.top_n])
     csv_path = out_dir / f"{case_id}_tracts.csv"
-    columns = ["rank", "entry_xyz_mm", "target_xyz_mm", "reachable_fraction",
-               "tract_length_mm", "parenchymal_depth_mm", "nearest_organ",
-               "nearest_organ_mm", "supracostal", "collision", "collision_organ"]
+    columns = CSV_COLUMNS
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columns)
         writer.writeheader()
@@ -577,7 +774,8 @@ def write_outputs(tracts: list[Tract], out_dir: Path, case_id: str, side: str,
             flat["collision_organ"] = row["collision_organ"] or ""
             writer.writerow({k: "" if flat[k] is None else flat[k] for k in columns})
     json_path = out_dir / f"{case_id}_tracts.json"
-    payload = {"case_id": case_id, "side": side, "params": asdict(params), "tracts": rows}
+    payload = {"case_id": case_id, "side": side, "params": asdict(params), "tracts": rows,
+               "best_by_group": best_by_group(tracts)}
     json_path.write_text(json.dumps(payload, indent=2))
     return csv_path, json_path
 
@@ -599,6 +797,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sweep-deg", type=float, default=25.0)
     parser.add_argument("--scope-depth-mm", type=float, default=120.0)
     parser.add_argument("--side", default="auto", choices=["left", "right", "auto"])
+    parser.add_argument("--targets", default="both", choices=["stone", "calyx", "both"])
+    parser.add_argument("--params-json", type=Path,
+                        help="JSON object of PlanParams fields to override (weights, margins)")
     args = parser.parse_args(argv)
 
     import nibabel as nib
@@ -611,16 +812,22 @@ def main(argv: list[str] | None = None) -> int:
         if img.shape != ct_img.shape or not np.allclose(img.affine, affine, atol=1e-3):
             parser.error(f"{name} grid does not match the CT grid")
 
-    params = PlanParams(sweep_deg=args.sweep_deg, scope_depth_mm=args.scope_depth_mm)
+    overrides = json.loads(args.params_json.read_text()) if args.params_json else {}
+    unknown = set(overrides) - set(PlanParams.__dataclass_fields__)
+    if unknown:
+        parser.error(f"unknown PlanParams fields in --params-json: {sorted(unknown)}")
+    params = PlanParams(**{"sweep_deg": args.sweep_deg, "scope_depth_mm": args.scope_depth_mm,
+                           "target_mode": args.targets, **overrides})
     ct = np.asarray(ct_img.get_fdata(dtype=np.float32))
     organs = np.asarray(organ_img.dataobj).astype(np.int32)
     stones = np.asarray(stone_img.dataobj).astype(np.int32)
     side = args.side
     if side == "auto":
         side = resolve_side(stones, organs, affine, params)
-    tracts = plan(ct, organs, stones, affine, side=side, params=params)
+    tracts = plan(ct, organs, stones, affine, side=side, params=params, return_all=True)
     csv_path, json_path = write_outputs(tracts, args.out_dir, _case_id(args.ct), side, params)
-    print(f"{len(tracts)} tracts, side {side}: {csv_path}, {json_path}")
+    print(f"{min(len(tracts), params.top_n)} of {len(tracts)} tracts, side {side}: "
+          f"{csv_path}, {json_path}")
     return 0
 
 
