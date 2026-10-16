@@ -224,3 +224,18 @@ def test_phantom_series_converts_onto_the_phantom_grid(tmp_path):
     ct, _, stones = phantom.make_phantom()
     ct[stones > 0] = 1000
     np.testing.assert_array_equal(np.asarray(img.dataobj), ct.astype(np.int16))
+
+
+def test_dcm2niix_found_beside_python_when_not_on_path(tmp_path, monkeypatch):
+    # launchd starts the planner with a bare PATH; the pip-installed dcm2niix
+    # sits next to the venv's python.
+    bindir = tmp_path / "venv" / "bin"
+    bindir.mkdir(parents=True)
+    exe = bindir / "dcm2niix"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setattr(ingest.sys, "executable", str(bindir / "python"))
+    assert ingest.find_dcm2niix() == str(exe)
+    exe.chmod(0o644)                                  # not executable: not used
+    assert ingest.find_dcm2niix() is None

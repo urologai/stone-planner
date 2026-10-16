@@ -18,5 +18,7 @@ set -a
 . "$env_file"
 set +a
 export FRONTEND_DIST="${FRONTEND_DIST:-$here/frontend/dist}"
+# launchd gives a bare PATH; the venv holds dcm2niix and the other tools.
+export PATH="$here/.venv/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "$here"
 exec "$here/.venv/bin/uvicorn" stoneplanner_api.app:app --host 127.0.0.1 --port "${PORT:-8000}"

@@ -1,6 +1,6 @@
 # Web app: deploy and run
 
-**Render is on hold.** To keep patient data off hosting services, nothing is deployed there; the current setup is one Mac mini, in [mac-mini.md](mac-mini.md). If a Render service was ever created from `render.yaml`, suspend or delete it, because a connected Blueprint redeploys on every push to `main`. The Modal section below still applies: it is one of the segmentation choices on the Mac's Admin tab, next to a home PC GPU ([gpu-worker.md](gpu-worker.md)).
+**Render is on hold.** To keep patient data off hosting services, nothing is deployed there; the current setup is one Mac mini; set it up with [get-it-running.md](get-it-running.md). If a Render service was ever created from `render.yaml`, suspend or delete it, because a connected Blueprint redeploys on every push to `main`. The Modal section below still applies: it is one of the segmentation choices on the Mac's Admin tab, next to a home PC GPU ([gpu-worker.md](gpu-worker.md)).
 
 The browser version has three parts:
 

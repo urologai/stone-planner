@@ -76,7 +76,7 @@ Nice to have, not required for Phase 1: a manual stone volume measured by someon
 
 ## How to use it
 
-The tool runs on the team's Mac mini, which is approved to hold patient data. You use it by connecting to that Mac with Screen Sharing and opening the tool in a browser there; the tool itself is reachable only from the Mac. Setting up the Mac is done once, by whoever looks after it: [docs/mac-mini.md](docs/mac-mini.md). 3D Slicer is optional, for correcting a segmentation by hand ([docs/running.md](docs/running.md)).
+The tool runs on the team's Mac mini, which is approved to hold patient data. You use it by connecting to that Mac with Screen Sharing and opening the tool in a browser there; the tool itself is reachable only from the Mac. Setting up the Mac, and the PC that does the segmentation, is done once, by whoever looks after them: [docs/get-it-running.md](docs/get-it-running.md) has every step. 3D Slicer is optional, for correcting a segmentation by hand ([docs/running.md](docs/running.md)).
 
 ### Each time you use it
 
