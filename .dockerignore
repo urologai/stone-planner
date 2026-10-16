@@ -37,8 +37,8 @@ frontend/dist/
 tests/
 docs/
 scripts/
-StonePlanner/
 modal_app/
+slicer_module/
 *.md
 
 # Secrets and local env

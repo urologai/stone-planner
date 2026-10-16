@@ -1,8 +1,8 @@
 """Ingest tests on synthetic DICOM series. No real imaging.
 
-Each test writes a small CT series with pydicom: 12 slices of 48 x 48,
-0.8 mm pixels, 2.5 mm slices, LPS orientation as a scanner writes it. The
-headers are loaded with fake PHI in plain, nested, private, and file-name
+Each test writes a small CT series with pydicom (tests/dicom_series.py):
+12 slices of 48 x 48, 0.8 mm pixels, 2.5 mm slices, LPS orientation as a
+scanner writes it, with fake PHI in plain, nested, private, and file-name
 locations so the de-identification can be checked byte for byte.
 """
 
@@ -13,98 +13,19 @@ import nibabel as nib
 import numpy as np
 import pydicom
 import pytest
-from pydicom.dataset import Dataset, FileMetaDataset
-from pydicom.sequence import Sequence
-from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+from dicom_series import (
+    COLS,
+    N_SLICES,
+    PHI_STRINGS,
+    PIXEL_MM,
+    ROWS,
+    SLICE_MM,
+    expected_marker_ras,
+    write_radiograph,
+    write_series,
+)
 
 from stoneplanner import ingest
-
-ROWS = COLS = 48
-N_SLICES = 12
-PIXEL_MM = 0.8
-SLICE_MM = 2.5
-IPP0 = np.array([-19.2, -19.2, -100.0])     # LPS mm of the first voxel of slice 0
-MARKER = (30, 10, 7)                         # row, column, slice of a 1000 HU voxel
-
-PHI_STRINGS = [b"DOE^JOHN", b"MRN12345", b"Mercy General", b"ACC998877",
-               b"HOUSE^GREGORY", b"19500102", b"20240315", b"101500", b"CT ABD DOE"]
-
-
-def _slice_hu(k, burned=False):
-    r, c = np.mgrid[:ROWS, :COLS]
-    hu = np.where((r - 24) ** 2 + (c - 24) ** 2 <= 20 ** 2, 40, -1000).astype(np.int16)
-    if k == MARKER[2]:
-        hu[MARKER[0], MARKER[1]] = 1000
-    if burned:
-        for j in range(6):                  # a row of glyph-sized bright blocks
-            hu[1:6, 2 + 7 * j: 5 + 7 * j] = 3000
-    return hu
-
-
-def write_series(folder, burned=False, modality="CT", series_uid=None, tag_burned=False):
-    folder.mkdir(parents=True, exist_ok=True)
-    # Planted UIDs use a root pydicom's generate_uid() never produces, so a new
-    # random UID cannot contain one by chance.
-    study_uid = "1.3.6.1.4.1.99999.7.111"
-    series_uid = series_uid or "1.3.6.1.4.1.99999.7.222"
-    frame_uid = "1.3.6.1.4.1.99999.7.333"
-    for k in range(N_SLICES):
-        ds = Dataset()
-        ds.SOPClassUID = ingest.CT_IMAGE_STORAGE
-        ds.SOPInstanceUID = generate_uid()
-        ds.StudyInstanceUID = study_uid
-        ds.SeriesInstanceUID = series_uid
-        ds.FrameOfReferenceUID = frame_uid
-        ds.Modality = modality
-        ds.PatientName = "DOE^JOHN"
-        ds.PatientID = "MRN12345"
-        ds.PatientBirthDate = "19500102"
-        ds.InstitutionName = "Mercy General"
-        ds.AccessionNumber = "ACC998877"
-        ds.ReferringPhysicianName = "HOUSE^GREGORY"
-        ds.StudyDate = ds.SeriesDate = ds.AcquisitionDate = "20240315"
-        ds.StudyTime = "101500"
-        ds.StudyDescription = "CT ABD DOE"
-        ds.Manufacturer = "ACME"
-        ds.ManufacturerModelName = "Scanner 9000"
-        ds.KVP = "120"
-        ds.SliceThickness = str(SLICE_MM)
-        ds.PatientPosition = "FFS"
-        ds.InstanceNumber = N_SLICES - k              # reversed, to test sorting
-        ds.ImagePositionPatient = [float(v) for v in IPP0 + [0, 0, k * SLICE_MM]]
-        ds.ImageOrientationPatient = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        ds.PixelSpacing = [PIXEL_MM, PIXEL_MM]
-        ds.Rows, ds.Columns = ROWS, COLS
-        ds.SamplesPerPixel = 1
-        ds.PhotometricInterpretation = "MONOCHROME2"
-        ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 16, 15
-        ds.PixelRepresentation = 1
-        ds.RescaleIntercept, ds.RescaleSlope = "-1024", "1"
-        if tag_burned:
-            ds.BurnedInAnnotation = "YES"
-        ds.PixelData = (_slice_hu(k, burned) + 1024).astype(np.int16).tobytes()
-
-        ds.add_new(0x00090010, "LO", "ACME PRIVATE")
-        ds.add_new(0x00091001, "LO", "MRN12345")
-        item = Dataset()
-        item.RequestedProcedureID = "MRN12345"
-        item.ScheduledProcedureStepID = "ACC998877"
-        ds.RequestAttributesSequence = Sequence([item])
-
-        meta = FileMetaDataset()
-        meta.MediaStorageSOPClassUID = ds.SOPClassUID
-        meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
-        meta.TransferSyntaxUID = ExplicitVRLittleEndian
-        ds.file_meta = meta
-        ds.save_as(folder / f"MRN12345_{k}.dcm", enforce_file_format=True)
-    return folder
-
-
-def expected_marker_ras():
-    r, c, k = MARKER
-    lps = IPP0 + np.array([c * PIXEL_MM, r * PIXEL_MM, k * SLICE_MM])
-    return np.array([-lps[0], -lps[1], lps[2]])
-
 
 # ---------------------------------------------------------------------------
 # De-identification
@@ -238,3 +159,68 @@ def test_main_refuses_mrn_like_case_id(tmp_path):
     src = write_series(tmp_path / "src")
     with pytest.raises(SystemExit):
         ingest.main([str(src), str(tmp_path / "out"), "--case-id", "12345678"])
+
+
+# ---------------------------------------------------------------------------
+# Whole study folders (the local ingest page)
+
+
+def _study(tmp_path):
+    study = tmp_path / "study"
+    write_series(study / "axial", series_uid="1.3.6.1.4.1.99999.7.10", series_number=3,
+                 description="AXIAL 2.5")
+    write_series(study / "coronal", series_uid="1.3.6.1.4.1.99999.7.11", series_number=4,
+                 description="COR REFORMAT", orientation="coronal")
+    write_radiograph(study / "scout", series_uid="1.3.6.1.4.1.99999.7.12")
+    return study
+
+
+def test_list_and_recommend_series(tmp_path):
+    series = ingest.list_series(_study(tmp_path))
+    by_uid = {s["series_uid"]: s for s in series}
+    assert by_uid["1.3.6.1.4.1.99999.7.10"]["orientation"] == "axial"
+    assert by_uid["1.3.6.1.4.1.99999.7.11"]["orientation"] == "coronal"
+    assert by_uid["1.3.6.1.4.1.99999.7.12"]["kind"] == "radiograph"
+    assert by_uid["1.3.6.1.4.1.99999.7.10"]["n_images"] == N_SLICES
+    assert by_uid["1.3.6.1.4.1.99999.7.10"]["slice_thickness_mm"] == SLICE_MM
+    assert ingest.recommend_series(series) == "1.3.6.1.4.1.99999.7.10"
+    assert ingest.recommend_series(series, "radiograph") == "1.3.6.1.4.1.99999.7.12"
+
+
+def test_deidentify_one_series_from_a_study(tmp_path):
+    study = _study(tmp_path)
+    with pytest.raises(ValueError, match="series"):
+        ingest.deidentify_series(study, tmp_path / "all")
+    out = ingest.deidentify_series(study, tmp_path / "deid",
+                                   series_uid="1.3.6.1.4.1.99999.7.10")
+    files = list(out.iterdir())
+    assert len(files) == N_SLICES
+    assert {pydicom.dcmread(f).ImageOrientationPatient[4] for f in files} == {1.0}
+
+
+def test_radiograph_deidentified_and_flagged(tmp_path):
+    src = write_radiograph(tmp_path / "kub")
+    with pytest.raises(ValueError, match="CT"):
+        ingest.deidentify_series(src, tmp_path / "no")
+    out = ingest.deidentify_series(src, tmp_path / "deid", kinds=("radiograph",))
+    (f,) = list(out.iterdir())
+    raw = f.read_bytes()
+    for s in (b"DOE^JOHN", b"MRN12345", b"Mercy General", b"20240402"):
+        assert s not in raw
+    ds = pydicom.dcmread(f)
+    assert ds.Modality == "DX" and list(ds.ImagerPixelSpacing) == [0.15, 0.15]
+    assert ingest.detect_burned_in_text(out, kinds=("radiograph",)) is True
+
+
+def test_phantom_series_converts_onto_the_phantom_grid(tmp_path):
+    from dicom_series import write_phantom_series
+
+    from stoneplanner import phantom
+
+    src = write_phantom_series(tmp_path / "ph")
+    deid = ingest.deidentify_series(src, tmp_path / "deid")
+    img = nib.load(str(ingest.convert_to_nifti(deid, tmp_path / "ph.nii.gz")))
+    np.testing.assert_allclose(img.affine, phantom.AFFINE, atol=1e-4)
+    ct, _, stones = phantom.make_phantom()
+    ct[stones > 0] = 1000
+    np.testing.assert_array_equal(np.asarray(img.dataobj), ct.astype(np.int16))

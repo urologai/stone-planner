@@ -54,7 +54,7 @@ Minimum per case for the 20-case Phase 1 set:
 - Stone description from the surgeon's or radiologist's read: location, staghorn or not, largest dimension.
 - Postoperative imaging and stone-free status: the postop CT or KUB as DICOM if one exists, and a yes/no on residual fragments with size if present. This is the outcome the reach score gets tested against.
 - Complications relevant to tract choice: pleural injury, colon injury, transfusion. Expect zeros; record them anyway.
-- Age, sex, BMI. BMI matters because skin-to-stone distance is a model input.
+- Age, sex, BMI. BMI matters because skin-to-stone distance limits tract length. The planner measures that distance on the CT itself; BMI lets us check the measurement and describe the cases.
 - A study ID key linking the de-identified case number to the MRN, kept off this repo and off any shared drive.
 
 Nice to have, not required for Phase 1: a manual stone volume measured by someone on the team, and the surgeon's own annotation of the puncture site on the preop CT.
@@ -62,6 +62,8 @@ Nice to have, not required for Phase 1: a manual stone volume measured by someon
 ## How to look at it
 
 Phase 1 runs inside 3D Slicer, a free desktop program for medical imaging. You load a case, run the module, and the top tracts appear as lines on the CT with their scores. There is also a browser version: you upload a case that has already been de-identified on your own machine, it is segmented and planned on the server, and you see the CT, organs, stones and top tracts in the browser. The server keeps nothing; you save the case to your own computer to come back to it.
+
+To enter cases, the same browser page can run on your own computer with an ingest page. You pick the exported CT folder, the page finds the axial series and shows the slice thickness, and you fill in the operative report, stone, outcome, complication and patient fields above as choices and numbers, with no free-text boxes. On saving, the CT is stripped of identifiers, the case gets the next study ID, and the MRN is written only to a key file you keep elsewhere on that computer. The case then opens in the planner, and its segmentation and tracts are saved back into the case folder so nothing is redone.
 
 ## Data policy
 

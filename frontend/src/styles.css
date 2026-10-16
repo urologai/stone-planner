@@ -93,6 +93,7 @@ header {
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
+  .main { order: -1; }          /* images first on a phone, controls below */
 }
 aside { min-width: 0; }
 .main { min-width: 0; }
@@ -105,6 +106,7 @@ aside { min-width: 0; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 0.75rem; }
 legend { font-size: 0.85rem; font-weight: 600; }
 details { margin-bottom: 0.5rem; }
+.params-box > summary { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem; }
 summary { cursor: pointer; font-size: 0.85rem; margin-bottom: 0.5rem; }
 
 .viewer { background: #0f1115; border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }
@@ -122,3 +124,33 @@ summary { cursor: pointer; font-size: 0.85rem; margin-bottom: 0.5rem; }
 .tag { font-size: 0.75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; margin-right: 0.25rem; }
 .tag.bad { color: var(--bad); border-color: var(--bad); }
 .card:has(.tracts) { overflow-x: auto; }
+.ingest > .card { overflow-x: auto; }
+
+.tabs { display: flex; gap: 0.25rem; }
+
+.ingest { max-width: 1200px; margin: 1rem auto; padding: 0 1rem; }
+.ingest-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.ingest-grid > div { min-width: 0; }
+@media (max-width: 900px) { .ingest-grid { grid-template-columns: minmax(0, 1fr); } }
+.ingest label, .ingest .group { margin-bottom: 0.6rem; }
+.group { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+.two, .three { display: grid; gap: 0.75rem; }
+.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.radios { display: flex; gap: 0.9rem; flex-wrap: wrap; padding: 0.3rem 0; }
+label.inline, .ingest label.inline {
+  flex-direction: row; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.9rem;
+}
+.checks { display: flex; gap: 0.5rem 0.9rem; flex-wrap: wrap; margin: 0.3rem 0 0.75rem; }
+.tract-row {
+  display: grid; grid-template-columns: 4rem minmax(8rem, 12rem) 1fr;
+  align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; font-size: 0.9rem;
+}
+.ingest .group.row-label { flex-direction: row; justify-content: space-between; align-items: center; }
+.folder { margin-bottom: 0.75rem; }
+.folder { overflow-x: auto; }
+.series { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 0.4rem; }
+.series th, .series td { text-align: left; padding: 0.25rem 0.35rem; border-bottom: 1px solid var(--line); }
+.card.ok { border-color: #2e7d32; }
+.row.spread { justify-content: space-between; align-items: center; margin-top: 0; }
+.row.spread h2 { margin: 0; }

@@ -18,6 +18,14 @@ Routes (all under /api need a session except health and login):
     GET    /api/cases/{id}/files/{key} ct, organs, organs_display, stones, overlay,
                                        tracts_json, tracts_csv, stones_csv
     GET    /api/cases/{id}/bundle      saved-case zip for the user's disk
+
+Local ingest page, only when DATA_DIR and KEY_FILE are set (never on Render):
+    GET    /api/ingest                 enabled?, next case ID, ingested cases
+    POST   /api/ingest/scan            multipart "files": a DICOM folder; lists series
+    POST   /api/ingest/cases           {mrn, preop, postop?, clinical, case_id?}
+    GET    /api/ingest/manual.csv      the validation table
+    POST   /api/ingest/cases/{case_id}/open   open a library case in the planner
+    POST   /api/cases/{id}/save-to-library    planner results into the case folder
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import shutil
 from pathlib import Path
 
 import nibabel as nib
@@ -47,6 +56,7 @@ from stoneplanner_api.jobs import (
     run_segmentation,
     write_overlay,
 )
+from stoneplanner_api.library import STONE_LOCATIONS, Library, LibraryError
 from stoneplanner_api.overlay import DISPLAY_GROUPS
 from stoneplanner_api.segmentation import Segmenter, modal_segmenter
 
@@ -77,6 +87,9 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
     if segmenter is None and settings.modal_configured:
         segmenter = modal_segmenter(settings.modal_app_name, settings.modal_function_name)
     max_bytes = settings.max_upload_mb * 1024 * 1024
+    library = None
+    if settings.data_dir is not None and settings.key_file is not None:
+        library = Library(settings.data_dir, settings.key_file)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -108,6 +121,10 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
     async def case_error(_request: Request, exc: CaseError):
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    @app.exception_handler(LibraryError)
+    async def library_error(_request: Request, exc: LibraryError):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
     def session(request: Request) -> str:
         return auth.require(request)
 
@@ -137,6 +154,7 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
             "stones": [],
             "plan": None,
             "jobs": jobs.status(case.token),
+            "source_case": case.meta.get("source_case"),
         }
         if case.has("stones_csv"):
             import csv
@@ -269,6 +287,109 @@ def create_app(settings: Settings | None = None, segmenter: Segmenter | None = N
         data = store.bundle(case)
         return Response(data, media_type="application/zip", headers={
             "Content-Disposition": f'attachment; filename="{case.case_id}_case.zip"'})
+
+    # -- local ingest page -------------------------------------------------------
+
+    def need_library() -> Library:
+        if library is None:
+            raise HTTPException(404, "The ingest page runs only on a local install "
+                                     "(DATA_DIR and KEY_FILE set).")
+        return library
+
+    @app.get("/api/ingest")
+    def ingest_status(_sid: str = Depends(session)):
+        if library is None:
+            return {"enabled": False}
+        return {"enabled": True, "next_case_id": library.next_case_id(),
+                "cases": library.list_cases(), "stone_locations": list(STONE_LOCATIONS)}
+
+    @app.post("/api/ingest/scan")
+    async def ingest_scan(request: Request, _sid: str = Depends(session)):
+        lib = need_library()
+        form = await request.form(max_files=50_000, max_fields=10)
+        token, staging = lib.new_staging()
+        limit, total, n = settings.max_ingest_mb * 1024 * 1024, 0, 0
+        try:
+            for upload in form.getlist("files"):
+                if not hasattr(upload, "read"):
+                    continue
+                data = await upload.read()
+                total += len(data)
+                if total > limit:
+                    raise HTTPException(413, f"upload is larger than {settings.max_ingest_mb} MB")
+                # File names from the browser are ignored: they can carry MRNs
+                # and path tricks. Only the bytes are kept, under a counter.
+                (staging / f"{n:06d}.dcm").write_bytes(data)
+                n += 1
+            from stoneplanner import ingest as ingest_mod
+
+            series = ingest_mod.list_series(staging)
+        except ValueError as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise LibraryError(f"no usable DICOM in that folder ({exc})") from exc
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        finally:
+            await form.close()
+        return {"staging": token, "n_files": n, "series": series,
+                "recommended_ct": ingest_mod.recommend_series(series, "ct"),
+                "recommended_radiograph": ingest_mod.recommend_series(series, "radiograph")}
+
+    @app.post("/api/ingest/cases")
+    def ingest_case(body: dict, _sid: str = Depends(session)):
+        lib = need_library()
+        result = lib.ingest(str(body.get("mrn", "")), body.get("preop") or {},
+                            body.get("clinical") or {}, body.get("postop") or None,
+                            body.get("case_id") or None)
+        return {**result, "cases": lib.list_cases(), "next_case_id": lib.next_case_id()}
+
+    @app.get("/api/ingest/manual.csv")
+    def ingest_manual(_sid: str = Depends(session)):
+        lib = need_library()
+        return FileResponse(lib.write_manual_csv(), filename="manual.csv",
+                            content_disposition_type="attachment")
+
+    @app.post("/api/ingest/cases/{case_id}/open")
+    def ingest_open(case_id: str, sid: str = Depends(session)):
+        lib = need_library()
+        folder = lib.case_dir(case_id)
+        ct_path = folder / f"{case_id}.nii.gz"
+        if not ct_path.exists():
+            raise HTTPException(404, "No such case in the library.")
+        images = {"ct": nib.load(str(ct_path))}
+        for key in ("organs", "stones"):
+            path = lib.result_path(case_id, f"{key}.nii.gz")
+            if path.exists():
+                images[key] = nib.load(str(path))
+        if ("organs" in images) != ("stones" in images):
+            images.pop("organs", None)
+            images.pop("stones", None)
+        case = store.create(sid, case_id, images["ct"], images.get("organs"),
+                            images.get("stones"), extra_meta={"source_case": case_id})
+        ensure_stone_table(case)
+        tracts = lib.result_path(case_id, "tracts.json")
+        if tracts.exists() and case.has("stones"):
+            shutil.copyfile(tracts, case.file("tracts_json"))
+            write_overlay(case)
+        return summary(case)
+
+    @app.post("/api/cases/{case_token}/save-to-library")
+    def save_to_library(case: Case = Depends(owned)):
+        lib = need_library()
+        source = case.meta.get("source_case")
+        if not source:
+            raise HTTPException(400, "This case was not opened from the library.")
+        written = []
+        for key, suffix in (("organs", "organs.nii.gz"), ("stones", "stones.nii.gz"),
+                            ("stones_csv", "stones.csv"), ("tracts_json", "tracts.json"),
+                            ("tracts_csv", "tracts.csv")):
+            if case.has(key):
+                target = lib.result_path(source, suffix)
+                shutil.copyfile(case.file(key), target)
+                written.append(target.name)
+        lib.write_manual_csv()
+        return {"written": written}
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE"])
     def api_not_found(rest: str):

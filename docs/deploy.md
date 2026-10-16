@@ -6,7 +6,7 @@ The browser version has three parts:
 |---|---|---|
 | Web service | Render, one Docker container | FastAPI API plus the React front end with the NiiVue viewer. Stone thresholding and planning run here on CPU. |
 | Segmentation | Modal, GPU on demand | TotalSegmentator, called by the web service with the CT. Scales to zero when idle. |
-| Your machine | | De-identification (`stoneplanner-ingest`) and saved cases. |
+| Your machine | | De-identification (`stoneplanner-ingest` or the local ingest page) and saved cases. |
 
 ## Data rules
 
@@ -65,13 +65,38 @@ docker run -p 8000:8000 -e APP_PASSWORD=dev -e COOKIE_SECURE=false stone-planner
 
 `COOKIE_SECURE=false` is only for plain-HTTP local use; Render serves HTTPS and the default (secure cookies) applies.
 
+## Local ingest page
+
+The same image, run on your own computer with two folders mounted, adds an Ingest tab for entering cases. It is for the computer that holds the DICOM exports and the MRN key; never set these variables on Render (the app refuses to start the library there).
+
+- `DATA_DIR`: case folders (`case_001/` with the de-identified CT, metadata, clinical form, postop imaging, and later the segmentation and tracts), plus `manual.csv` for `scripts/validate.py`, rewritten on every change.
+- `KEY_FILE`: the CSV linking case IDs to MRNs. Must be outside `DATA_DIR`. Keep it off shared drives.
+
+```
+mkdir -p ~/stone-data ~/stone-key
+docker run -p 127.0.0.1:8000:8000 --user "$(id -u):$(id -g)" \
+  -v ~/stone-data:/data -v ~/stone-key:/key \
+  -e DATA_DIR=/data -e KEY_FILE=/key/mrn_key.csv \
+  -e APP_PASSWORD=dev -e COOKIE_SECURE=false stone-planner
+```
+
+Open http://localhost:8000. `--user` makes the container write as you, so the files on your disk are yours. `127.0.0.1:` keeps the page off the network. Without Docker: `DATA_DIR=~/stone-data KEY_FILE=~/stone-key/mrn_key.csv APP_PASSWORD=dev COOKIE_SECURE=false uvicorn stoneplanner_api.app:app` after `npm run build` in `frontend/` and with `FRONTEND_DIST=frontend/dist`.
+
+Per case: choose the exported study folder (the axial CT series is picked and its slice thickness shown; reformats and scouts are listed but not chosen), fill in the form, optionally add the postop CT or KUB folder, and press Ingest case. Uploads are staged in the system temp folder and deleted after de-identification. A postop KUB keeps only de-identified DICOM and is always flagged for a by-eye check of burned-in labels. Open in planner loads the case; Segment on GPU needs the Modal token, as on Render. Save to case folder writes the organ and stone maps and tracts into the case folder under the names `stoneplanner-plan` uses, so reopening skips the work and `validate.py` reads the folder directly:
+
+```
+python scripts/validate.py ~/stone-data ~/stone-data/manual.csv ~/stone-report
+```
+
+`MAX_INGEST_MB` (default 4000) caps one folder upload.
+
 ## Tests
 
 ```
 pytest                                  # everything, including the API tests
 cd frontend && npm test && npm run build
 pytest tests/test_browser.py            # the built front end in headless Chromium
-E2E_BASE_URL=http://localhost:8000 pytest tests/test_browser.py   # against a running container
+E2E_BASE_URL=http://localhost:8000 E2E_PASSWORD=dev pytest tests/test_browser.py   # against a running container
 ```
 
 The browser test needs Playwright and a Chromium binary (`CHROMIUM_PATH`). The Modal call is replaced by a stub in the tests; the real GPU path has to be checked once by hand after the first deploy.

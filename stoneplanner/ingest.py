@@ -53,6 +53,13 @@ Implementation notes (how the above is made concrete):
     header text from the converter carries over and HU are unscaled.
   - The CLI refuses a case_id that does not start with a letter, so a bare
     MRN or accession number cannot be passed by mistake.
+  - For the local ingest page (stoneplanner_api.library): list_series reads
+    a whole study export and recommend_series picks the thin axial CT;
+    deidentify_series takes the chosen series_uid. A postoperative KUB
+    (CR or DX radiograph) can be de-identified with kinds=("radiograph",);
+    it is kept as de-identified DICOM, not converted, and its burned-in
+    check always reports suspected, because the HU heuristic does not
+    apply to plain films.
 """
 
 from __future__ import annotations
@@ -68,6 +75,12 @@ from pathlib import Path
 import numpy as np
 
 CT_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.2"
+# Plain radiographs, for a postoperative KUB: computed and digital X-ray.
+RADIOGRAPH_STORAGE = {
+    "1.2.840.10008.5.1.4.1.1.1": "CR",
+    "1.2.840.10008.5.1.4.1.1.1.1": "DX",
+    "1.2.840.10008.5.1.4.1.1.1.1.1": "DX",
+}
 DEID_METHOD = "stoneplanner allowlist (superset of DICOM PS3.15 basic profile)"
 CASE_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
@@ -85,6 +98,9 @@ KEEP_KEYWORDS: tuple[str, ...] = (
     "BitsAllocated", "BitsStored", "HighBit", "PixelRepresentation", "PixelPaddingValue",
     "WindowCenter", "WindowWidth", "RescaleIntercept", "RescaleSlope", "RescaleType",
     "BurnedInAnnotation", "LossyImageCompression", "PixelData",
+    # Radiograph geometry and display, for a postoperative KUB.
+    "ImagerPixelSpacing", "PixelIntensityRelationship", "PixelIntensityRelationshipSign",
+    "PresentationLUTShape", "PresentationIntentType", "ViewPosition",
 )
 _DATE_KEYWORDS = ("StudyDate", "SeriesDate", "AcquisitionDate", "ContentDate")
 _REGENERATED_UIDS = ("StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID",
@@ -101,8 +117,17 @@ _BLOB_MAX_HEIGHT = 25
 # Reading
 
 
-def _read_series(dicom_dir: Path, stop_before_pixels: bool = False) -> list:
-    """All image datasets under dicom_dir, one series, sorted along the scan."""
+def series_kind(ds) -> str:
+    """ct (single-frame CT), radiograph (CR/DX), or other."""
+    sop = str(ds.get("SOPClassUID", ""))
+    if sop == CT_IMAGE_STORAGE and ds.get("Modality") == "CT":
+        return "ct"
+    if sop in RADIOGRAPH_STORAGE:
+        return "radiograph"
+    return "other"
+
+
+def _read_all(dicom_dir: Path, stop_before_pixels: bool) -> list:
     import pydicom
     from pydicom.errors import InvalidDicomError
 
@@ -121,15 +146,80 @@ def _read_series(dicom_dir: Path, stop_before_pixels: bool = False) -> list:
         datasets.append(ds)
     if not datasets:
         raise ValueError(f"no DICOM images found under {dicom_dir}")
+    return datasets
 
+
+def _read_series(dicom_dir: Path, stop_before_pixels: bool = False,
+                 series_uid: str | None = None, kinds: tuple[str, ...] = ("ct",)) -> list:
+    """Image datasets of one series under dicom_dir, sorted along the scan.
+
+    With series_uid, only that series is read from a folder that may hold
+    several; without it, the folder must hold exactly one series.
+    """
+    datasets = _read_all(dicom_dir, stop_before_pixels)
+    if series_uid is not None:
+        datasets = [ds for ds in datasets if ds.get("SeriesInstanceUID") == series_uid]
+        if not datasets:
+            raise ValueError("the chosen series is not in the uploaded files")
     series = {ds.get("SeriesInstanceUID") for ds in datasets}
     if len(series) != 1:
         raise ValueError(f"{dicom_dir} holds {len(series)} series; pass one series per call")
     for ds in datasets:
-        if ds.get("Modality") != "CT" or ds.SOPClassUID != CT_IMAGE_STORAGE:
-            raise ValueError(f"expected single-frame CT Image Storage, got "
-                             f"{ds.get('Modality')} / {ds.SOPClassUID}")
+        if series_kind(ds) not in kinds:
+            wanted = "single-frame CT Image Storage" if kinds == ("ct",) else "/".join(kinds)
+            raise ValueError(f"expected {wanted}, got {ds.get('Modality')} / {ds.SOPClassUID}")
     return sorted(datasets, key=_slice_key)
+
+
+def _orientation(ds) -> str:
+    try:
+        iop = np.asarray(ds.ImageOrientationPatient, dtype=float)
+    except (AttributeError, ValueError):
+        return "unknown"
+    normal = np.abs(np.cross(iop[:3], iop[3:]))
+    if normal.max() < 0.9:
+        return "oblique"
+    return ("sagittal", "coronal", "axial")[int(np.argmax(normal))]
+
+
+def list_series(dicom_dir: Path) -> list[dict]:
+    """Every series in a folder (a whole study export is fine), headers only.
+
+    Each entry: series_uid, series_number, description, modality, kind
+    (ct / radiograph / other), n_images, slice_thickness_mm, orientation,
+    usable (a CT or radiograph this module can take). Descriptions can hold
+    free text, so the list is for local display only; nothing here is stored.
+    """
+    groups: dict[str, list] = {}
+    for ds in _read_all(dicom_dir, stop_before_pixels=True):
+        groups.setdefault(str(ds.get("SeriesInstanceUID", "")), []).append(ds)
+    out = []
+    for uid, items in groups.items():
+        first = items[0]
+        kind = series_kind(first)
+        thickness = first.get("SliceThickness")
+        out.append({
+            "series_uid": uid,
+            "series_number": int(first.get("SeriesNumber", 0) or 0),
+            "description": str(first.get("SeriesDescription", "") or ""),
+            "modality": str(first.get("Modality", "") or ""),
+            "kind": kind,
+            "n_images": len(items),
+            "slice_thickness_mm": float(thickness) if thickness not in (None, "") else None,
+            "orientation": _orientation(first) if kind == "ct" else "projection",
+            "usable": kind in ("ct", "radiograph"),
+        })
+    return sorted(out, key=lambda e: (e["series_number"], e["description"]))
+
+
+def recommend_series(series: list[dict], kind: str = "ct") -> str | None:
+    """The series to use: for CT the axial one with most images, thinnest first."""
+    pool = [e for e in series if e["kind"] == kind]
+    if kind == "ct":
+        axial = [e for e in pool if e["orientation"] == "axial" and e["n_images"] >= 10]
+        pool = axial or pool
+        pool.sort(key=lambda e: (-e["n_images"], e["slice_thickness_mm"] or 99.0))
+    return pool[0]["series_uid"] if pool else None
 
 
 def _slice_key(ds) -> tuple:
@@ -153,12 +243,17 @@ def _hu(ds) -> np.ndarray:
 # De-identification
 
 
-def deidentify_series(dicom_dir: Path, work_dir: Path) -> Path:
-    """Copy the series into work_dir with PHI tags removed. Return the new dir."""
+def deidentify_series(dicom_dir: Path, work_dir: Path, series_uid: str | None = None,
+                      kinds: tuple[str, ...] = ("ct",)) -> Path:
+    """Copy the series into work_dir with PHI tags removed. Return the new dir.
+
+    series_uid picks one series from a folder holding several; kinds may add
+    "radiograph" for a postoperative KUB.
+    """
     from pydicom.dataset import Dataset, FileMetaDataset
     from pydicom.uid import generate_uid
 
-    datasets = _read_series(dicom_dir)
+    datasets = _read_series(dicom_dir, series_uid=series_uid, kinds=kinds)
     out_dir = Path(work_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     uid_map: dict[str, str] = {}
@@ -213,10 +308,17 @@ def _text_like_blobs(band: np.ndarray) -> int:
     return count
 
 
-def detect_burned_in_text(dicom_dir: Path) -> bool:
-    """Return True if any slice looks like it carries burned-in annotation."""
-    for ds in _read_series(dicom_dir):
+def detect_burned_in_text(dicom_dir: Path, kinds: tuple[str, ...] = ("ct",)) -> bool:
+    """Return True if any slice looks like it carries burned-in annotation.
+
+    Radiographs always return True: their pixel values are not HU, so the
+    text heuristic cannot clear them, and plain films often carry burned-in
+    markers or labels. They need a look by eye.
+    """
+    for ds in _read_series(dicom_dir, kinds=kinds):
         if str(ds.get("BurnedInAnnotation", "")).upper() == "YES":
+            return True
+        if series_kind(ds) == "radiograph":
             return True
         try:
             hu = _hu(ds)

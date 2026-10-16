@@ -1,4 +1,4 @@
-"""Checks on StonePlanner/StonePlanner.py that run without 3D Slicer.
+"""Checks on slicer_module/StonePlanner.py that run without 3D Slicer.
 
 The module is imported with stub slicer, qt, ctk and vtk modules, which
 catches syntax and import-time errors and lets the pure helpers be tested.
@@ -16,7 +16,7 @@ import pytest
 
 from stoneplanner import geometry, phantom
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "StonePlanner" / "StonePlanner.py"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "slicer_module" / "StonePlanner.py"
 
 
 @pytest.fixture

@@ -47,6 +47,51 @@ export type CaseSummary = {
     best_by_group: Record<string, TractRow>;
   };
   jobs: Partial<Record<"segment" | "plan", JobState>>;
+  source_case: string | null;
+};
+
+export type SeriesInfo = {
+  series_uid: string;
+  series_number: number;
+  description: string;
+  modality: string;
+  kind: "ct" | "radiograph" | "other";
+  n_images: number;
+  slice_thickness_mm: number | null;
+  orientation: string;
+  usable: boolean;
+};
+
+export type ScanResult = {
+  staging: string;
+  n_files: number;
+  series: SeriesInfo[];
+  recommended_ct: string | null;
+  recommended_radiograph: string | null;
+};
+
+export type LibraryCase = {
+  case_id: string;
+  laterality: string;
+  tracts: string[];
+  stone_free: boolean;
+  postop_imaging: string;
+  burned_in_suspected: boolean;
+  postop_burned_in_suspected: boolean;
+  segmented: boolean;
+  planned: boolean;
+};
+
+export type IngestStatus =
+  | { enabled: false }
+  | { enabled: true; next_case_id: string; cases: LibraryCase[]; stone_locations: string[] };
+
+export type IngestResult = {
+  case_id: string;
+  notes: string[];
+  metadata: Record<string, unknown>;
+  cases: LibraryCase[];
+  next_case_id: string;
 };
 
 export type ParamField = { name: string; default: unknown };
@@ -100,7 +145,39 @@ export const api = {
   segment: (id: string) => request<CaseSummary>(`/api/cases/${id}/segment`, { method: "POST" }),
   plan: (id: string, side: string, params: Record<string, unknown>) =>
     request<CaseSummary>(`/api/cases/${id}/plan`, json({ side, params })),
+  ingestStatus: () => request<IngestStatus>("/api/ingest"),
+  ingestCase: (body: unknown) => request<IngestResult>("/api/ingest/cases", json(body)),
+  openLibraryCase: (caseId: string) =>
+    request<CaseSummary>(`/api/ingest/cases/${caseId}/open`, { method: "POST" }),
+  saveToLibrary: (id: string) =>
+    request<{ written: string[] }>(`/api/cases/${id}/save-to-library`, { method: "POST" }),
 };
+
+/** Upload a DICOM folder for scanning, reporting upload progress (0 to 1). */
+export function scanFolder(files: File[], onProgress: (f: number) => void): Promise<ScanResult> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    // Browser file names are not sent: they can carry MRNs.
+    files.forEach((file, i) => form.append("files", file, `f${i}`));
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/ingest/scan");
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: { detail?: string } & Partial<ScanResult> = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // keep the status text
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as ScanResult);
+      else reject(new ApiError(xhr.status, body.detail ?? xhr.statusText));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Upload failed"));
+    xhr.send(form);
+  });
+}
+
+export const manualCsvUrl = "/api/ingest/manual.csv";
 
 export const fileUrl = (id: string, key: string) => `/api/cases/${id}/files/${key}`;
 export const bundleUrl = (id: string) => `/api/cases/${id}/bundle`;
