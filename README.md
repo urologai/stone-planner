@@ -18,6 +18,21 @@ The full build plan, stack, and references are in [PLAN.md](PLAN.md). This page 
 
 The segmentation is AI. The tract ranking is geometry. We think the geometry is the part nobody has published in 3D with a reach-and-collision score, and that is the contribution.
 
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/workflow-graph-dark.svg">
+  <img src="docs/diagrams/workflow-graph-light.svg" alt="Workflow of the stone planner in five bands. Ingest, on your computer: the preop CT, postop imaging, operative report and MRN go into a folder scan, de-identification, a clinical form and a study ID; you check and save, which writes a case folder, manual.csv, and a separate MRN key file. Segmentation: the de-identified CT goes to a GPU service and comes back as an organ map, and stones are detected. Planning: targets, skin entry points and parameters feed a collision check and rigid and flexible reach for every tract, which are ranked. Review: the planner view shows the top tracts, you review and correct them, and the results are saved to the case folder. Validation: the saved results and manual.csv produce the validation report.">
+</picture>
+
+Rose marks identifiable data: the DICOM export, the chart and the MRN. It stays on the computer that runs the ingest page. Amber marks the places where you decide: before a case is saved, the planner parameters, and the review of the tracts. Teal marks what the study tests: the ranked tracts and the validation report. Dashed shapes keep nothing: the GPU service gets a de-identified CT, returns the organ map and keeps neither. A standalone version of the diagram is in [docs/diagrams/workflow-graph.html](docs/diagrams/workflow-graph.html).
+
+1. **Ingest.** You choose the exported CT study folder. The page lists every series, picks the axial CT and shows its slice thickness. It removes identifiers from the image headers and warns if text may be burned into the pixels. You fill in the case form from the operative report and chart. The case gets the next study ID (case_001, case_002, ...), and the MRN goes only into a key file kept in a separate folder.
+2. **Segmentation.** The de-identified CT goes to a GPU service, which outlines the kidneys and surrounding organs and keeps nothing. Stones are found as dense voxels inside the kidney, with their volume and density.
+3. **Planning.** For every pair of skin entry point and target, the planner checks whether the tract hits colon, spleen, liver, lung or rib (any hit rules it out) and how much of the stone a rigid scope reaches from it. Closeness to colon and pleura, a supracostal entry, and other penalties lower the score. The parameters behind these are placeholders until surgeons set them.
+4. **Review.** You see the CT with organs, stones and the top three tracts, and a ranked table. If the segmentation is wrong, fix it in 3D Slicer; the corrections are logged. Saving writes the results into the case folder so nothing is recomputed.
+5. **Validation.** A report compares the top tract with the calyx actually used, the automatic stone volume with a manual one, and predicted reach with residual fragments after surgery.
+
 ## What it does not do
 
 - It does not see the collecting system. Stone patients get noncontrast CT, so calyces are invisible. Early versions target the stone itself as a stand-in for the calyx, which works for staghorn and large calyceal stones and poorly for a pelvic stone with an empty entry calyx. Later phases add a posterior-calyx estimate and, if it works, a model trained on CT urograms.
@@ -59,11 +74,79 @@ Minimum per case for the 20-case Phase 1 set:
 
 Nice to have, not required for Phase 1: a manual stone volume measured by someone on the team, and the surgeon's own annotation of the puncture site on the preop CT.
 
-## How to look at it
+## How to use it
 
-Phase 1 runs inside 3D Slicer, a free desktop program for medical imaging. You load a case, run the module, and the top tracts appear as lines on the CT with their scores. There is also a browser version: you upload a case that has already been de-identified on your own machine, it is segmented and planned on the server, and you see the CT, organs, stones and top tracts in the browser. The server keeps nothing; you save the case to your own computer to come back to it.
+The tool runs on your own computer in a free program called Docker, which packages the software so there is nothing else to install. These steps are for a Mac. Use a computer your institution approves for patient data, with disk encryption (FileVault) turned on: the DICOM export and the MRN key are identifiable. 3D Slicer is optional, for correcting a segmentation by hand ([docs/running.md](docs/running.md)).
 
-To enter cases, the same browser page can run on your own computer with an ingest page. You pick the exported CT folder, the page finds the axial series and shows the slice thickness, and you fill in the operative report, stone, outcome, complication and patient fields above as choices and numbers, with no free-text boxes. On saving, the CT is stripped of identifiers, the case gets the next study ID, and the MRN is written only to a key file you keep elsewhere on that computer. The case then opens in the planner, and its segmentation and tracts are saved back into the case folder so nothing is redone.
+### Once, to set it up
+
+1. Install Docker Desktop from docker.com and open it. Wait until it says Docker is running. It has to be open whenever you use the tool.
+2. Open Terminal (Applications, Utilities) and paste these lines, one at a time. The first may ask to install the Mac developer tools; say yes and run it again when that finishes.
+
+   ```
+   git clone https://github.com/urologai/stone-planner.git
+   cd stone-planner
+   docker build -t stone-planner .
+   mkdir -p ~/stone-data ~/stone-key ~/stone-report
+   ```
+
+   The build takes a few minutes. `stone-data` will hold the de-identified cases. `stone-key` will hold the file that links study IDs to MRNs. `stone-report` will hold the validation report. Keep both out of iCloud Drive, Dropbox, OneDrive and any shared drive.
+
+### Each time you use it
+
+1. In Terminal, start the tool. Pick your own password in place of `choose-a-password`:
+
+   ```
+   cd ~/stone-planner
+   docker run -p 127.0.0.1:8000:8000 --user "$(id -u):$(id -g)" \
+     -v ~/stone-data:/data -v ~/stone-key:/key \
+     -e DATA_DIR=/data -e KEY_FILE=/key/mrn_key.csv \
+     -e APP_PASSWORD=choose-a-password -e COOKIE_SECURE=false stone-planner
+   ```
+
+2. When the Terminal shows `Uvicorn running`, open http://localhost:8000 in your browser and log in with that password. The page is reachable only from this computer.
+3. To stop, click the Terminal window and press Control-C.
+
+To get an update: `cd ~/stone-planner`, then `git pull`, then `docker build -t stone-planner .` again.
+
+### Enter a case (Ingest tab)
+
+1. From PACS, export the preoperative noncontrast CT study to a folder as DICOM. The whole study is fine; the page picks the axial series. File names do not matter and are not kept.
+2. The case ID is filled in for you. Type the MRN.
+3. Under Preoperative CT, choose the study folder. Check that the series marked is the axial CT, and note the slice thickness shown. Thin slices, 1 to 3 mm, are best. Set the patient position on the CT and whether it was done here or outside.
+4. Under Operative report, set laterality, OR position and the number of tracts, then for each tract the calyceal group and supracostal or subcostal. Add sheath size and fluoroscopic or ultrasound access if the note has them.
+5. Under Stone, tick every location, choose staghorn (no, partial, complete) and enter the largest dimension in mm. Add a manual stone volume if someone measured one.
+6. Under Postoperative outcome, choose stone free yes or no. If no, enter the largest residual fragment in mm. If there is a postop CT or KUB, export it as DICOM and choose that folder.
+7. Under Complications, the answers start at no; change any that happened.
+8. Under Patient, enter age (90 and over is recorded as 90), sex and BMI. Height and weight will fill BMI in for you.
+9. The box at the bottom lists anything still missing. When it is empty, press Ingest case.
+10. Read the message that appears. If it says text may be burned into the images, look at them before using the case. A postop KUB always carries this warning, because an X-ray cannot be checked automatically.
+
+The case now appears under Cases on this computer.
+
+### Plan a case (Planner tab)
+
+1. In the case list, press Open in planner.
+2. Press Segment on GPU. This needs the GPU service connected; see [docs/deploy.md](docs/deploy.md). It takes a few minutes.
+3. Leave the side on auto unless you want a specific side. Leave the planner parameters at their defaults unless you are testing them ([docs/parameters.md](docs/parameters.md)). Press Plan tracts.
+4. The top tracts appear on the CT in green, yellow and orange, with a ranked table below. Click a row to centre the images on that target.
+5. Press Save to case folder. Opening the case again later shows the saved result without recomputing.
+
+### Get the validation report
+
+When cases are planned, run this in Terminal from `~/stone-planner`:
+
+```
+docker run --rm --user "$(id -u):$(id -g)" -v ~/stone-data:/data -v ~/stone-report:/report \
+  -v "$PWD/scripts":/scripts:ro --entrypoint python stone-planner \
+  /scripts/validate.py /data /data/manual.csv /report
+```
+
+The summary prints in Terminal. `validation.csv` in `~/stone-report` has one row per case.
+
+### The hosted version
+
+There is also a version on a web server for looking at cases away from this computer. It accepts only a CT that has already been de-identified, segments and plans it the same way, and keeps nothing: Save case downloads a file you open again later. It has no ingest page and never sees DICOM or MRNs.
 
 ## Data policy
 
