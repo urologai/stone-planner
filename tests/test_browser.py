@@ -29,7 +29,7 @@ from stoneplanner import phantom
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "frontend" / "dist"
-PASSWORD = "e2e-password"
+PASSWORD = os.environ.get("E2E_PASSWORD", "e2e-password")
 CHROMIUM = os.environ.get("CHROMIUM_PATH", "/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -136,6 +136,7 @@ def test_plan_save_and_reopen(page, case_files, tmp_path):
     expect(page.get_by_text("case_e2e")).to_be_visible()
     expect(page.get_by_text("1 stone (")).to_be_visible()
 
+    page.get_by_text("Planner parameters").click()
     page.get_by_text("Advanced").click()
     page.get_by_label("Candidate entry points").fill("400")
     page.get_by_role("button", name="Plan tracts").click()

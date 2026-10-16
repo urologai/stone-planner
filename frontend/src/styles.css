@@ -93,6 +93,7 @@ header {
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
+  .main { order: -1; }          /* images first on a phone, controls below */
 }
 aside { min-width: 0; }
 .main { min-width: 0; }
@@ -105,6 +106,7 @@ aside { min-width: 0; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 0.75rem; }
 legend { font-size: 0.85rem; font-weight: 600; }
 details { margin-bottom: 0.5rem; }
+.params-box > summary { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem; }
 summary { cursor: pointer; font-size: 0.85rem; margin-bottom: 0.5rem; }
 
 .viewer { background: #0f1115; border-radius: 8px; overflow: hidden; margin-bottom: 1rem; }

@@ -71,7 +71,7 @@ docker run -p 8000:8000 -e APP_PASSWORD=dev -e COOKIE_SECURE=false stone-planner
 pytest                                  # everything, including the API tests
 cd frontend && npm test && npm run build
 pytest tests/test_browser.py            # the built front end in headless Chromium
-E2E_BASE_URL=http://localhost:8000 pytest tests/test_browser.py   # against a running container
+E2E_BASE_URL=http://localhost:8000 E2E_PASSWORD=dev pytest tests/test_browser.py   # against a running container
 ```
 
 The browser test needs Playwright and a Chromium binary (`CHROMIUM_PATH`). The Modal call is replaced by a stub in the tests; the real GPU path has to be checked once by hand after the first deploy.

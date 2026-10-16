@@ -197,8 +197,17 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
                 </select>
               </label>
               {fields.length > 0 && (
-                <ParamsForm fields={fields} values={values} defaults={defaults}
-                  onChange={setValues} />
+                <details className="params-box">
+                  <summary>
+                    Planner parameters
+                    {(() => {
+                      const n = Object.keys(overrides(values, defaults)).length;
+                      return n ? ` (${n} changed)` : " (defaults)";
+                    })()}
+                  </summary>
+                  <ParamsForm fields={fields} values={values} defaults={defaults}
+                    onChange={setValues} />
+                </details>
               )}
               <button disabled={!current.has.organs || running}
                 onClick={() => act(() => api.plan(current.id, side, overrides(values, defaults)))}>
