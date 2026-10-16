@@ -37,8 +37,9 @@ frontend/dist/
 tests/
 docs/
 scripts/
-StonePlanner/
 modal_app/
+# Not StonePlanner/ (the Slicer module): on macOS file names ignore case, so
+# that pattern also drops stoneplanner/, the package the image runs.
 *.md
 
 # Secrets and local env
