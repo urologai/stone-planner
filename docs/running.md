@@ -18,6 +18,8 @@ Run the tests once: `pytest`. They use synthetic phantoms only.
 
 Pick a case ID that starts with a letter (`case_001`). The MRN-to-case key lives outside the repo.
 
+The local ingest page does the first step, records the clinical fields, keeps the key and writes `manual.csv` for you; see [deploy.md](deploy.md#local-ingest-page). The command line below does the same imaging steps without the form.
+
 ```
 stoneplanner-ingest   /path/dicom/series   cases/case_001 --case-id case_001
 stoneplanner-segment  cases/case_001/case_001.nii.gz   cases/case_001 [--device cpu|cuda|mps]

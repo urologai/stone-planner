@@ -38,6 +38,11 @@ class Settings:
     frontend_dist: Path | None = None
     cookie_secure: bool = True
     plan_workers: int = 1
+    # Local ingest page. Both set turns it on; never set them on Render (the
+    # library refuses to start there). KEY_FILE must be outside DATA_DIR.
+    data_dir: Path | None = None
+    key_file: Path | None = None
+    max_ingest_mb: int = 4000
 
     @property
     def modal_configured(self) -> bool:
@@ -58,4 +63,7 @@ class Settings:
             frontend_dist=Path(dist) if dist else None,
             cookie_secure=_bool("COOKIE_SECURE", True),
             plan_workers=_int("PLAN_WORKERS", 1),
+            data_dir=Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else None,
+            key_file=Path(os.environ["KEY_FILE"]) if os.environ.get("KEY_FILE") else None,
+            max_ingest_mb=_int("MAX_INGEST_MB", 4000),
         )

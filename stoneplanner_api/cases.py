@@ -193,7 +193,7 @@ class CaseStore:
 
     def create(self, owner: str, case_id: str, ct: nib.Nifti1Image,
                organs: nib.Nifti1Image | None = None,
-               stones: nib.Nifti1Image | None = None) -> Case:
+               stones: nib.Nifti1Image | None = None, extra_meta: dict | None = None) -> Case:
         ct = clean_image(ct, labels=False)
         for img, what in ((organs, "organ map"), (stones, "stone map")):
             if img is not None:
@@ -202,7 +202,8 @@ class CaseStore:
         path = self.root / token
         path.mkdir(parents=True)
         case = Case(token, path, {"case_id": case_id, "owner": owner,
-                                  "created": time.time(), "last_used": time.time()})
+                                  "created": time.time(), "last_used": time.time(),
+                                  **(extra_meta or {})})
         nib.save(ct, str(case.file("ct")))
         if organs is not None:
             nib.save(clean_image(organs, labels=True), str(case.file("organs")))

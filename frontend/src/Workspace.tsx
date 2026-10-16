@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, bundleUrl, fileUrl, type CaseSummary, type ParamField } from "./api";
+import Ingest from "./Ingest";
 import { defaultsOf, overrides, type ParamValues } from "./params";
 import ParamsForm from "./ParamsForm";
 import TractsTable from "./TractsTable";
@@ -78,9 +79,17 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
   const [version, setVersion] = useState(0);
   const [focus, setFocus] = useState<number[] | null>(null);
   const [error, setError] = useState("");
+  // The ingest page exists only on a local run with DATA_DIR and KEY_FILE set.
+  const [ingest, setIngest] = useState(false);
+  const [tab, setTab] = useState<"ingest" | "planner">("planner");
+  const [saved, setSaved] = useState("");
   const defaults = defaultsOf(fields);
 
   useEffect(() => {
+    api.ingestStatus().then((s) => {
+      setIngest(s.enabled);
+      if (s.enabled) setTab("ingest");
+    }).catch(() => undefined);
     api.params().then((p) => {
       setFields(p.fields);
       setValues(defaultsOf(p.fields));
@@ -141,6 +150,27 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
     if (current) await api.deleteCase(current.id).catch(() => undefined);
     setCurrent(null);
     setFocus(null);
+    setSaved("");
+  }
+
+  async function openFromLibrary(c: CaseSummary) {
+    if (current) await api.deleteCase(current.id).catch(() => undefined);
+    setFocus(null);
+    setSaved("");
+    setCurrent(c);
+    setVersion((v) => v + 1);
+    setTab("planner");
+  }
+
+  async function saveToLibrary() {
+    if (!current) return;
+    setError("");
+    try {
+      const res = await api.saveToLibrary(current.id);
+      setSaved(`Saved ${res.written.length} files to ${current.source_case}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
   }
 
   const job = (kind: "segment" | "plan") => current?.jobs[kind];
@@ -150,13 +180,23 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
       <header>
         <strong>Stone planner</strong>
         <span className="muted small">Research software. Not for clinical use.</span>
+        {ingest && (
+          <nav className="tabs">
+            <button className={tab === "ingest" ? "" : "secondary"} data-testid="tab-ingest"
+              onClick={() => setTab("ingest")}>Ingest</button>
+            <button className={tab === "planner" ? "" : "secondary"} data-testid="tab-planner"
+              onClick={() => setTab("planner")}>Planner</button>
+          </nav>
+        )}
         <span className="spacer" />
         {current && <span className="case-id">{current.case_id}</span>}
         {current && <button className="secondary" onClick={closeCase}>Close case</button>}
         <button className="secondary" onClick={onLogout}>Log out</button>
       </header>
       {error && <p className="error banner">{error}</p>}
-      {!current ? (
+      {tab === "ingest" ? (
+        <Ingest onOpen={openFromLibrary} />
+      ) : !current ? (
         <Upload onCase={(c) => { setCurrent(c); setVersion((v) => v + 1); }} />
       ) : (
         <main className="layout">
@@ -222,12 +262,25 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
             </section>
             <section className="card">
               <h2>Save</h2>
-              <p className="muted small">
-                The server keeps nothing once you leave. Save the case to reopen it later
-                without recomputing.
-              </p>
+              {current.source_case ? (
+                <p className="muted small">
+                  Save to case folder writes the segmentation and plan next to the CT in{" "}
+                  {current.source_case}, where reopening and validate.py find them.
+                </p>
+              ) : (
+                <p className="muted small">
+                  The server keeps nothing once you leave. Save the case to reopen it later
+                  without recomputing.
+                </p>
+              )}
               <div className="row">
-                <a className="button" href={bundleUrl(current.id)}>Save case</a>
+                {current.source_case && (
+                  <button disabled={running || !current.has.organs} onClick={saveToLibrary}
+                    data-testid="save-to-library">
+                    Save to case folder
+                  </button>
+                )}
+                <a className={current.source_case ? "button secondary" : "button"} href={bundleUrl(current.id)}>Save case</a>
                 {current.has.tracts_json && (
                   <>
                     <a className="button secondary" href={fileUrl(current.id, "tracts_csv")}>
@@ -239,6 +292,7 @@ export default function Workspace({ gpu, onLogout }: { gpu: boolean; onLogout: (
                   </>
                 )}
               </div>
+              {saved && <p className="small muted" data-testid="saved-status">{saved}</p>}
             </section>
           </aside>
           <section className="main">
