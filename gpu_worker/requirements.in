@@ -12,3 +12,6 @@ scipy
 scikit-image
 fastapi>=0.115
 uvicorn>=0.30
+# 2026.10.19 removes the affected emSign ECC Root CA - G3 while retaining
+# unaffected emSign roots needed for compatibility.
+certifi>=2026.10.19

@@ -9,7 +9,7 @@
 # digest so a rebuild cannot silently change them; refresh deliberately.
 
 # --- Stage 1: build the front end -------------------------------------------
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend
+FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -17,7 +17,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- Stage 2: Python runtime --------------------------------------------------
-FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS app
+FROM python:3.13.17-slim@sha256:fe14fd57a4c0361110eaa0c284112b189750bcb43fb04bb5d1ee7b7744027ccf AS app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -29,10 +29,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Refresh the image's Debian CA bundle through the package manager. This keeps
+# the system trust store current independently of Python's certifi bundle.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Hash-pinned lock (requirements-web.txt, generated from requirements-web.in):
 # pip refuses any wheel that does not match, so nothing substituted gets in.
 COPY requirements-web.txt ./
-RUN pip install --require-hashes -r requirements-web.txt
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.2 \
+ && python -m pip install --require-hashes -r requirements-web.txt
 
 COPY stoneplanner/ /app/stoneplanner/
 COPY stoneplanner_api/ /app/stoneplanner_api/

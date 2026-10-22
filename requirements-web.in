@@ -11,6 +11,9 @@ nibabel>=5.0
 scikit-image>=0.21
 fastapi>=0.115
 uvicorn[standard]>=0.30
+# 2026.10.19 removes the affected emSign ECC Root CA - G3 while retaining
+# unaffected emSign roots needed for compatibility.
+certifi>=2026.10.19
 python-multipart>=0.0.9
 itsdangerous>=2.2
 modal>=1.0

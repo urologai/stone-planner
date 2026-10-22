@@ -39,8 +39,12 @@ weights = modal.Volume.from_name("stone-planner-totalseg-weights", create_if_mis
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("libgl1", "libglib2.0-0")
-    .pip_install("TotalSegmentator==2.18.0", "nibabel>=5.0", "numpy", "scipy",
+    # Modal's Debian base is provider-managed, so pin the Python bootstrap and
+    # certificate bundle that this image installs rather than resolving an
+    # affected certifi release during a later rebuild.
+    .apt_install("ca-certificates", "libgl1", "libglib2.0-0")
+    .pip_install("pip==26.2.2", "certifi==2026.10.19",
+                 "TotalSegmentator==2.18.0", "nibabel>=5.0", "numpy", "scipy",
                  "scikit-image")
     .env({"TOTALSEG_HOME_DIR": f"{WEIGHTS_DIR}/totalseg"})
     .add_local_python_source("stoneplanner")
